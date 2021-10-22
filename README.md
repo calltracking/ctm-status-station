@@ -1,11 +1,11 @@
-= CTM Status Station
+# CTM Status Station
 
 The goal this project is to make it easy to have light in a room that helps people in the area know when someone is on a phone call.
 
 We'll subscribe to incoming phone calls and active call events and change the light color to make this obvious
 
 
-= Setup
+# Setup
 
 Before the device is configured it will expose an access point: 
   ssid: ctmlight
