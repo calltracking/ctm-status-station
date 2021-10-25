@@ -23,6 +23,8 @@ Settings::Settings() {
   memset(this->pass, 0, 32);
   memset(this->access_token, 0, 64);
   memset(this->refresh_token, 0, 64);
+  this->ctm_configured = false;
+  this->wifi_configured = false;
 }
 
 bool Settings::begin() {

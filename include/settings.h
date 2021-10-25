@@ -13,13 +13,17 @@ struct Settings {
 
   char ssid[32]; // wifi ssid
   char pass[32]; // password ssid
-  char access_token[64];
-  char refresh_token[64];
 
   unsigned int account_id;
-  unsigned int team_id;
+  unsigned int team_id; // TODO
   bool wifi_configured;
   bool ctm_configured;
+  bool ctm_user_pending;
+
+  char device_code[64];
+  unsigned int expires_in;
+  char access_token[128];
+  char refresh_token[128];
 
 protected:
   uint32_t crc32();
