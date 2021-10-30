@@ -8,7 +8,17 @@
 #include <ArduinoJson.h> // see: https://arduinojson.org/v6/api/jsonobject/containskey/
 #include <WiFiClientSecure.h>
 #include <WebSocketsClient.h>
+#include <Adafruit_NeoPixel.h>
+#ifdef __AVR__
+ #include <avr/power.h> // Required for 16 MHz Adafruit Trinket
+#endif
+
 #include "settings.h"
+
+
+#define RESET_BUTTON 27
+#define STATUS_LIGHT_OUT 25
+#define STATUS_LIGHT_IN 26
 
 // amazon root ca for api.calltrackingmetrics.com secure connections
 const char *ca_cert="-----BEGIN CERTIFICATE-----\n"
@@ -47,6 +57,7 @@ WebServer server(80);
 Settings conf;
 WebSocketsClient webSocket;
 hw_timer_t * timer = NULL;
+Adafruit_NeoPixel *pixels;
 
 void handle_Main();
 void handle_Conf();
@@ -70,6 +81,16 @@ void setup() {
 
   delay(3000);
   conf.begin();
+  pinMode(RESET_BUTTON, INPUT_PULLDOWN);
+  pinMode(STATUS_LIGHT_OUT, OUTPUT);
+  pinMode(STATUS_LIGHT_IN, INPUT);
+
+  pixels = new Adafruit_NeoPixel(1, STATUS_LIGHT_IN, NEO_GRB + NEO_KHZ800);
+  pixels->begin(); // INITIALIZE NeoPixel strip object (REQUIRED)
+
+  pixels->setPixelColor(0, pixels->Color(150, 150, 0));
+  pixels->show();   // Send the updated pixel colors to the hardware.
+
 
   timer = timerBegin(0, 80, true);
   timerAttachInterrupt(timer, &onTimer, true);
@@ -138,6 +159,18 @@ void setup() {
 
 void loop() {
   server.handleClient();
+  pixels->setPixelColor(0, pixels->Color(150, 150, 0));
+  pixels->show();   // Send the updated pixel colors to the hardware.
+
+  if (digitalRead(RESET_BUTTON) == HIGH) {
+    Serial.println("reset pressed");
+    conf.ctm_configured = false;
+    conf.wifi_configured = false;
+    conf.save();
+    delay(2000);
+    ESP.restart();
+    return;
+  }
 
   if (conf.ctm_user_pending) {
     tp.DotStar_CycleColor(25);
