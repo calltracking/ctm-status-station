@@ -1,14 +1,14 @@
 /**
  * configure and listen for account or team events
  */
+//#define CTM_PRODUCTION
 #include <TinyPICO.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WebServer.h>
 #include <ArduinoJson.h> // see: https://arduinojson.org/v6/api/jsonobject/containskey/
 #include <WiFiClientSecure.h>
-#include <WebSocketsClient.h>
-#include <SocketIOclient.h>
+#include <ArduinoWebsockets.h>
 #include <Adafruit_NeoPixel.h>
 #ifdef __AVR__
  #include <avr/power.h> // Required for 16 MHz Adafruit Trinket
@@ -16,13 +16,18 @@
 
 #include "settings.h"
 
-
 #define RESET_BUTTON 27
 #define STATUS_LIGHT_OUT 25
 #define STATUS_LIGHT_IN 26
 
+#ifdef CTM_PRODUCTION
+#define APP_HOST "app.calltrackingmetrics.com"
+#define API_HOST "api.calltrackingmetrics.com"
+#define SOC_HOST "app.calltrackingmetrics.com"
+#define CLIENTID "udaRmKY2W_85tFPM6f92R9aG8i-VwPjfQT1Q8RI8qIg"
+
 // amazon root ca for api.calltrackingmetrics.com secure connections
-const char *ca_cert="-----BEGIN CERTIFICATE-----\n"
+const char *root_ca="-----BEGIN CERTIFICATE-----\n"
 "MIIDQTCCAimgAwIBAgITBmyfz5m/jAo54vB4ikPmljZbyjANBgkqhkiG9w0BAQsF\n"
 "ADA5MQswCQYDVQQGEwJVUzEPMA0GA1UEChMGQW1hem9uMRkwFwYDVQQDExBBbWF6\n"
 "b24gUm9vdCBDQSAxMB4XDTE1MDUyNjAwMDAwMFoXDTM4MDExNzAwMDAwMFowOTEL\n"
@@ -43,22 +48,66 @@ const char *ca_cert="-----BEGIN CERTIFICATE-----\n"
 "rqXRfboQnoZsG4q5WTP468SQvvG5\n"
 "-----END CERTIFICATE-----";
 
+#else
+const char *root_ca="-----BEGIN CERTIFICATE-----\n"
+"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\n"
+"-----END CERTIFICATE-----";
+
+#define APP_HOST "taf2.ngrok.io"
+#define API_HOST "taf2.ngrok.io"
+#define SOC_HOST "taf2.ngrok.io"
+#define CLIENTID "aJOX4QK_QzADcxVG_ZVY2tCB1KgqffXpKuJUEQbcr48"
+
+#endif
+
+
 
 const char *default_ssid = "ctmlight";
 const char *default_pass = "ctmstatus";
 static char html_buffer[4096];
 static char html_error[64];
+bool socketClosed = false;
 bool linkPending = false;
 bool linkError = false;
 bool linkTimerPending = false; // waiting for token device code
 uint64_t lastLinkTimerCheck = 0;
+uint64_t lastPing = 0;
 
 String captoken;
+bool hasAuthGranted = false;
 
 TinyPICO tp = TinyPICO();
 WebServer server(80);
 Settings conf;
-SocketIOclient socketIO;
+websockets::WebsocketsClient socket;
 
 Adafruit_NeoPixel *pixels;
 
@@ -71,13 +120,15 @@ void handle_Unlink();
 void handle_Linked();
 void handleNotFound();
 void checkTokenStatus();
-void socketIOEvent(socketIOmessageType_t type, uint8_t * payload, size_t length);
+void socketEvent(websockets::WebsocketsEvent event, String data);
+void socketMessage(websockets::WebsocketsMessage message);
 void refreshAccessToken();
 void refreshCapToken(int attempts=0);
 void startWebsocket();
+void dnsPreload(const char *name);
 
-#define SET_RED pixels->clear(); pixels->setPixelColor(0, pixels->Color(150, 0, 0)); pixels->show();
-#define SET_GREEN pixels->clear(); pixels->setPixelColor(0, pixels->Color(0, 150, 0)); pixels->show();
+#define SET_RED pixels->clear(); pixels->setPixelColor(0, pixels->Color(0, 150, 0)); pixels->show();
+#define SET_GREEN pixels->clear(); pixels->setPixelColor(0, pixels->Color(150, 0, 0)); pixels->show();
 #define SET_BLUE pixels->clear(); pixels->setPixelColor(0, pixels->Color(0, 0, 150)); pixels->show();
 
 void setup() {
@@ -152,14 +203,24 @@ void setup() {
     startWebsocket();
   }
 }
+void dnsPreload(const char *name) {
+  IPAddress ipaddr;
+  int ret;
+  ret = WiFi.hostByName (name, ipaddr);
+  Serial.printf("hostbyname: %s ret= %d %s \n", name, ret, ipaddr.toString().c_str() );
+}
 
 void startWebsocket() {
   if (captoken.length() > 0) {
 
     tp.DotStar_SetPixelColor(0, 255, 0);
-    // get a captoken
-    socketIO.begin("app.calltrackingmetrics.com", 443, "/socket.io/?EIO=4");//, ca_cert);
-    socketIO.onEvent(socketIOEvent);
+    dnsPreload(SOC_HOST);
+
+    socket.setCACert(root_ca);
+    socket.onEvent(socketEvent);
+    socket.onMessage(socketMessage);
+
+    socket.connectSecure(SOC_HOST, 443, "/socket.io/?EIO=3&transport=websocket");//, root_ca);
 
   } else {
     Serial.println("unable to init captoken is invalid!");
@@ -168,13 +229,30 @@ void startWebsocket() {
 }
 
 void loop() {
+  uint64_t now = millis();
   if (conf.ctm_configured) {
-    socketIO.loop();
+    if (socketClosed) { 
+      delay(1000);
+      Serial.println("lost connection - reconnect?");
+    } else {
+      socket.poll();
+      uint64_t deltaSeconds = (now - lastPing) / 1000;
+      if (deltaSeconds > 25) {
+        if (hasAuthGranted) {
+          // a maybe more effective ping?
+          socket.send(String("42[\"calls.active\",{\"account\":") + conf.account_id + "}]");
+        } else {
+          Serial.print("ping socket: ");
+          Serial.print(deltaSeconds);
+          Serial.println("seconds past");
+        }
+        socket.ping(); // ping every 25 seconds
+        lastPing = now;
+      }
+    }
   } else {
     server.handleClient();
   }
-
-  uint64_t now = millis();
 
   if (digitalRead(RESET_BUTTON) == HIGH) {
     Serial.println("reset pressed");
@@ -188,12 +266,12 @@ void loop() {
 
   if (conf.ctm_user_pending) {
     tp.DotStar_CycleColor(25);
-    if (linkTimerPending && (now - lastLinkTimerCheck) > 5000) {
+    uint64_t linkCheckStatusDeltaSeconds = (now - lastLinkTimerCheck) / 1000;
+    if (linkTimerPending && linkCheckStatusDeltaSeconds > 5) {
+      lastLinkTimerCheck = now;
       // execution polling status connection check
       checkTokenStatus();
     }
-  } else if (conf.ctm_configured) {
-    delay(10);
   }
 }
 
@@ -277,16 +355,18 @@ void handle_Link() {
   linkError   = false;
   WiFiClientSecure client;
   HTTPClient http;
-  client.setCACert(ca_cert);
+  Serial.printf("use root_ca: %s\n", root_ca);
+  client.setCACert(root_ca);
 
   // secure requests read: https://techtutorialsx.com/2017/11/18/esp32-arduino-https-get-request/
-  const char *url = "https://api.calltrackingmetrics.com/oauth2/device_token";
+  const char *url = "https://" API_HOST "/oauth2/device_token";
+  Serial.printf("request device token at:%s\n", url);
   http.setConnectTimeout(10000);// timeout in ms
   http.setTimeout(10000); // 10 seconds
   http.begin(client, url);
 //  http.addHeader("Content-Type", "application/json");
 
-  int r =  http.POST("client_id=udaRmKY2W_85tFPM6f92R9aG8i-VwPjfQT1Q8RI8qIg");
+  int r =  http.POST("client_id=" CLIENTID);
   String body = http.getString();
   http.end();
   Serial.println(body);
@@ -335,20 +415,20 @@ void handle_Link() {
 }
 // helpful: https://savjee.be/2020/01/multitasking-esp32-arduino-freertos/
 void checkTokenStatus() {
-  const char *url = "https://api.calltrackingmetrics.com/oauth2/token";
+  const char *url = "https://" API_HOST "/oauth2/token";
   Serial.println("checking token status");
   // send request to check device code
   //
   // possibly schedule the task again or free the device_code and give up
   WiFiClientSecure client;
-  client.setCACert(ca_cert);
+  client.setCACert(root_ca);
   HTTPClient http;
   http.setConnectTimeout(10000);// timeout in ms
   http.setTimeout(10000); // 10 seconds
   http.begin(client, url);
   http.addHeader("Content-Type", "application/x-www-form-urlencoded ");
 
-  int r =  http.POST(String("client_id=udaRmKY2W_85tFPM6f92R9aG8i-VwPjfQT1Q8RI8qIg&device_code=") + conf.device_code + "&grant_type=device_code");
+  int r =  http.POST(String("client_id=" CLIENTID "&device_code=") + conf.device_code + "&grant_type=device_code");
   String body = http.getString();
   http.end();
   Serial.println(body);
@@ -388,6 +468,7 @@ void checkTokenStatus() {
       memcpy(conf.refresh_token, (const char *)obj["refresh_token"], strlen((const char *)obj["refresh_token"]));
       conf.ctm_user_pending = false;
       conf.ctm_configured = true;
+      conf.user_id = (int)obj["user_id"];
       conf.expires_in = (int)obj["expires_in"];
       conf.save();
       tp.DotStar_Clear();
@@ -430,68 +511,83 @@ void handle_Linked() {
 void handleNotFound(){
   server.send(404, "text/plain", "404: Not found"); // Send HTTP status 404 (Not Found) when there's no handler for the URI in the request
 }
+/*
+ *
+-> 0{"sid":"wq...","upgrades":[],"pingInterval":25000,"pingTimeout":5000}	85  (12:18:53.065)
+-> 40	2  (12:18:53.066)
+-> 42["access.handshake"]	22  (12:18:53.066)
+<- 42["access.account",{"id":19223,"account":18614,"captoken":".."}]	472  (12:19:04.138)
+-> 42["auth.granted",{"account":18614}]	36  12:19:04.143
+<- 42["calls.active",{"account":18614}]	36  12:19:04.183
+-> 42["message",{"action":"active","what":"call","data":"0"}]	58  (12:19:04.185)
+<- 42["calls.active",{"account":18614}]	36  (12:19:08.189)
+-> 42["message",{"action":"active","what":"call","data":"0"}]
+ */
+void socketMessage(websockets::WebsocketsMessage message) {
+  Serial.print("WS(msg): ");
+  String data = message.data();
+  const char *data_str = data.c_str();
+  Serial.println(data);
 
+  if (data == "42[\"access.handshake\"]") {
+    StaticJsonDocument<1024> doc;
+    doc["id"] = conf.user_id;
+    doc["account"] = conf.account_id;
+    doc["captoken"] = captoken;
+    char json_string[1024];
+    serializeJson(doc, json_string);
+
+    snprintf(html_buffer, sizeof(html_buffer), "42[\"access.account\", %s]", json_string);
+    Serial.printf("reply to access.handshake: %s\n", html_buffer);
+    socket.send(html_buffer);
+    socket.ping();
+    lastPing = millis();
+    // 42["auth.granted",{"account":18614}]
+  } else if (data_str[0] == '4' && data_str[1] == '2' && data_str[2] == '[') {
+    StaticJsonDocument<1024> doc;
+    data.remove(0,2);
+    DeserializationError error = deserializeJson(doc, data);
+    if (error) {
+      Serial.print(F("deserializeJson() failed: "));
+      Serial.println(error.f_str());
+      return;
+    }
+    JsonArray msg = doc.as<JsonArray>();
+    String action = msg[0];
+    JsonObject fields = msg[1].as<JsonObject>();
+    Serial.println("received:" + action);
+    if (action == "auth.granted") {
+      hasAuthGranted = true;
+    } else if (action == "message") {
+      if (fields["action"] == "active" && fields["what"] == "call" ) {
+        int total = atoi((const char*)fields["data"]);
+        Serial.printf("total active %d\n", total);
+        if (total > 0) {
+          Serial.println("set red");
+          SET_RED
+        } else {
+          Serial.println("set green");
+          SET_GREEN
+        }
+      }
+    }
+  } else {
+    Serial.printf("header packets? '%s'\n", data_str);
+  }
+}
 // see: https://github.com/Links2004/arduinoWebSockets/blob/master/examples/esp32/WebSocketClientSocketIOack/WebSocketClientSocketIOack.ino
-void socketIOEvent(socketIOmessageType_t type, uint8_t * payload, size_t length) {
-  switch(type) {
-  case sIOtype_DISCONNECT:
-    Serial.printf("[IOc] Disconnected!\n");
-    break;
-  case sIOtype_CONNECT:
-    Serial.printf("[IOc] Connected to url: %s\n", payload);
-
-    // join default namespace (no auto join in Socket.IO V3)
-    socketIO.send(sIOtype_CONNECT, "/");
-    break;
-  case sIOtype_EVENT: {
-    char * sptr = NULL;
-    int id = strtol((char *)payload, &sptr, 10);
-    Serial.printf("[IOc] get event: %s id: %d\n", payload, id);
-    if(id) {
-        payload = (uint8_t *)sptr;
-    }
-    DynamicJsonDocument doc(1024);
-    DeserializationError error = deserializeJson(doc, payload, length);
-    if(error) {
-        Serial.print(F("deserializeJson() failed: "));
-        Serial.println(error.c_str());
-        return;
-    }
-
-    String eventName = doc[0];
-    Serial.printf("[IOc] event name: %s\n", eventName.c_str());
-
-    // Message Includes a ID for a ACK (callback)
-    if(id) {
-        // creat JSON message for Socket.IO (ack)
-        DynamicJsonDocument docOut(1024);
-        JsonArray array = docOut.to<JsonArray>();
-
-        // add payload (parameters) for the ack (callback function)
-        JsonObject param1 = array.createNestedObject();
-        param1["now"] = millis();
-
-        // JSON to String (serializion)
-        String output;
-        output += id;
-        serializeJson(docOut, output);
-
-        // Send event
-        socketIO.send(sIOtype_ACK, output);
-    }
-  }; break;
-  case sIOtype_ACK:
-    Serial.printf("[IOc] get ack: %u\n", length);
-    break;
-  case sIOtype_ERROR:
-    Serial.printf("[IOc] get error: %u\n", length);
-    break;
-  case sIOtype_BINARY_EVENT:
-    Serial.printf("[IOc] get binary: %u\n", length);
-    break;
-  case sIOtype_BINARY_ACK:
-    Serial.printf("[IOc] get binary ack: %u\n", length);
-    break;
+void socketEvent(websockets::WebsocketsEvent event, String data) {
+  if (event == websockets::WebsocketsEvent::ConnectionOpened) {
+    socketClosed  = false;
+    Serial.println("WS(evt): Connnection Opened");
+  } else if (event == websockets::WebsocketsEvent::ConnectionClosed) {
+    socketClosed  = true;
+    Serial.println("WS(evt): Connnection Closed");
+  } else if (event == websockets::WebsocketsEvent::GotPing) {
+    Serial.println("WS(evt): Got a Ping!");
+    socket.pong();
+  } else if (event == websockets::WebsocketsEvent::GotPong) {
+    Serial.println("WS(evt): Got a Pong!");
   }
 }
 void refreshCapToken(int attempts) {
@@ -501,11 +597,11 @@ void refreshCapToken(int attempts) {
   }
   Serial.println(String("fetch with access token:") + conf.access_token);
   WiFiClientSecure client;
-  client.setCACert(ca_cert);
+  client.setCACert(root_ca);
   HTTPClient http;
   // get the captoken for websocket access
   // curl -i -H 'Authorization: Bearer token' -X POST 
-  String captoken_url = String("https://api.calltrackingmetrics.com/api/v1/accounts/") + conf.account_id + "/users/captoken";
+  String captoken_url = String("https://" API_HOST "/api/v1/accounts/") + conf.account_id + "/users/captoken";
   Serial.println(captoken_url);
 
   http.setConnectTimeout(10000);// timeout in ms
@@ -514,7 +610,7 @@ void refreshCapToken(int attempts) {
   http.addHeader("Content-Type", "application/x-www-form-urlencoded ");
   http.addHeader("Authorization", String("Bearer ") + conf.access_token);
   /*
-   * curl -i -H 'Authorization: Bearer token' -X POST 'https://api.calltrackingmetrics.com/api/v1/accounts/{accoun_id}/users/captoken'
+   * curl -i -H 'Authorization: Bearer token' -X POST 'https://" API_HOST "/api/v1/accounts/{account_id}/users/captoken'
    */
 //  http.addHeader("Content-Type", "application/json");
 
@@ -551,17 +647,17 @@ void refreshAccessToken() {
   if (!conf.ctm_configured || !conf.access_token || !conf.refresh_token) {
     return;
   }
-  const char *url = "https://api.calltrackingmetrics.com/oauth2/token";
+  const char *url = "https://" API_HOST "/oauth2/token";
   Serial.println("refresh access token");
   WiFiClientSecure client;
-  client.setCACert(ca_cert);
+  client.setCACert(root_ca);
   HTTPClient http;
   http.setConnectTimeout(10000);// timeout in ms
   http.setTimeout(10000); // 10 seconds
   http.begin(client, url);
   http.addHeader("Content-Type", "application/x-www-form-urlencoded ");
 
-  int r = http.POST(String("client_id=udaRmKY2W_85tFPM6f92R9aG8i-VwPjfQT1Q8RI8qIg&device_code=") + conf.device_code + "&grant_type=refresh_token&refresh_token=" + conf.refresh_token);
+  int r = http.POST(String("client_id=" CLIENTID "&device_code=") + conf.device_code + "&grant_type=refresh_token&refresh_token=" + conf.refresh_token);
   String body = http.getString();
   http.end();
   Serial.println(body);
@@ -591,6 +687,7 @@ void refreshAccessToken() {
     memcpy(conf.refresh_token, (const char *)obj["refresh_token"], strlen((const char *)obj["refresh_token"]));
     conf.ctm_user_pending = false;
     conf.ctm_configured = true;
+    conf.user_id = (int)obj["user_id"];
     conf.expires_in = (int)obj["expires_in"];
     conf.save();
     tp.DotStar_Clear();

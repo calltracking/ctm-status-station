@@ -25,3 +25,6 @@ http://your-device-ip/
 
 From here you can click connect and you'll be taken to a page on https://app.calltrackingmetrics give access to the device and you should 
 next be presented with some options to choose a specific team or your whole account.
+
+
+openssl x509 -inform der -in ~/Desktop/ISRG\ Root\ X1.cer -out ~/Desktop/ISRG_ROOT_X1.pem

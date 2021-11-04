@@ -16,6 +16,7 @@ struct Settings {
 
   unsigned int account_id;
   unsigned int team_id; // TODO
+  unsigned int user_id; // need this to setup connection
   bool wifi_configured;
   bool ctm_configured;
   bool ctm_user_pending;
@@ -24,6 +25,7 @@ struct Settings {
   unsigned int expires_in;
   char access_token[128];
   char refresh_token[128];
+
 
 protected:
   uint32_t crc32();
