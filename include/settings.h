@@ -26,6 +26,9 @@ struct Settings {
   char access_token[128];
   char refresh_token[128];
 
+  // map agents to led's
+  int leds[4];
+  char agentNames[4][32];
 
 protected:
   uint32_t crc32();

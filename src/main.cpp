@@ -2,6 +2,7 @@
  * configure and listen for account or team events
  */
 //#define CTM_PRODUCTION
+//#define LIGHT_TEST
 #include <TinyPICO.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -18,7 +19,7 @@
 
 #define RESET_BUTTON 27
 #define STATUS_LIGHT_OUT 25
-#define STATUS_LIGHT_IN 26
+#define PIXEL_COUNT 4
 
 #ifdef CTM_PRODUCTION
 #define APP_HOST "app.calltrackingmetrics.com"
@@ -92,7 +93,7 @@ const char *root_ca="-----BEGIN CERTIFICATE-----\n"
 
 const char *default_ssid = "ctmlight";
 const char *default_pass = "ctmstatus";
-static char html_buffer[4096];
+static char html_buffer[8192];
 static char html_error[64];
 bool socketClosed = false;
 bool linkPending = false;
@@ -118,6 +119,8 @@ void handle_LinkStatus();
 void handle_Link();
 void handle_Unlink();
 void handle_Linked();
+void handle_AgentLookup();
+void handle_SaveAgents();
 void handleNotFound();
 void checkTokenStatus();
 void socketEvent(websockets::WebsocketsEvent event, String data);
@@ -127,9 +130,30 @@ void refreshCapToken(int attempts=0);
 void startWebsocket();
 void dnsPreload(const char *name);
 
-#define SET_RED pixels->clear(); pixels->setPixelColor(0, pixels->Color(0, 150, 0)); pixels->show();
-#define SET_GREEN pixels->clear(); pixels->setPixelColor(0, pixels->Color(150, 0, 0)); pixels->show();
-#define SET_BLUE pixels->clear(); pixels->setPixelColor(0, pixels->Color(0, 0, 150)); pixels->show();
+void setRed(int index)   { pixels->setPixelColor(index, pixels->Color(0, 150, 0)); }
+void setGreen(int index) { pixels->setPixelColor(index, pixels->Color(150, 0, 0)); }
+void setBlue(int index)  { pixels->setPixelColor(index, pixels->Color(0, 0, 150)); }
+void setBlueAll() {
+  pixels->clear(); 
+  for (int i = 0; i < PIXEL_COUNT; ++i) {
+    setBlue(i);
+  }
+  pixels->show(); 
+}
+void setRedAll() {
+  pixels->clear(); 
+  for (int i = 0; i < PIXEL_COUNT; ++i) {
+    setRed(i);
+  }
+  pixels->show(); 
+}
+void setGreenAll() {
+  pixels->clear(); 
+  for (int i = 0; i < PIXEL_COUNT; ++i) {
+    setGreen(i);
+  }
+  pixels->show(); 
+}
 
 void setup() {
   bool localAP = false;
@@ -139,9 +163,13 @@ void setup() {
   conf.begin();
   pinMode(RESET_BUTTON, INPUT_PULLDOWN);
 
-  pixels = new Adafruit_NeoPixel(1, STATUS_LIGHT_OUT, NEO_GRB + NEO_KHZ800);
+  pixels = new Adafruit_NeoPixel(PIXEL_COUNT, STATUS_LIGHT_OUT, NEO_GRB + NEO_KHZ800);
   pixels->begin(); // INITIALIZE NeoPixel strip object (REQUIRED)
-  SET_BLUE
+  setBlueAll();
+#ifdef LIGHT_TEST
+  delay(1000);
+  return;
+#endif
 
   if (conf.good() && conf.wifi_configured) {
     Serial.print("Connecting to network...");
@@ -185,6 +213,8 @@ void setup() {
   server.on("/link_status", HTTP_GET, handle_LinkStatus);
   server.on("/unlink", HTTP_POST, handle_Unlink);
   server.on("/linked", HTTP_POST, handle_Linked);
+  server.on("/agents", HTTP_GET, handle_AgentLookup);
+  server.on("/save_agents", HTTP_POST, handle_SaveAgents);
   server.onNotFound(handleNotFound);
 
   server.begin();
@@ -228,8 +258,47 @@ void startWebsocket() {
   }
 }
 
+void lightTestCycle() {
+  pixels->clear();
+  delay(500); // Pause before next pass through loop
+  for(int i=0; i< PIXEL_COUNT; ++i) { // For each pixel...
+    Serial.printf("set:%d\n", i);
+    delay(500); // Pause before next pass through loop
+    pixels->setPixelColor(i, pixels->Color(0, 0, 0));
+    pixels->show();   // Send the updated pixel colors to the hardware.
+    delay(500); // Pause before next pass through loop
+
+    // pixels.Color() takes RGB values, from 0,0,0 up to 255,255,255
+    // Here we're using a moderately bright green color:
+    if (i == 0) {
+      Serial.println("set red");
+      pixels->setPixelColor(i, pixels->Color(0, 150, 0));
+    } else if (i == 1) {
+      Serial.println("set green");
+      pixels->setPixelColor(i, pixels->Color(150, 0, 0));
+    } else if (i == 2) {
+      Serial.println("set blue");
+      pixels->setPixelColor(i, pixels->Color(0, 0, 150));
+    } else if (i == 3) {
+      Serial.println("set purple");
+      pixels->setPixelColor(i, pixels->Color(0, 150, 150));
+    } else if (i == 4) {
+      Serial.println("set orange");
+      pixels->setPixelColor(i, pixels->Color(150, 150, 0));
+    }
+
+    pixels->show();   // Send the updated pixel colors to the hardware.
+
+    delay(500); // Pause before next pass through loop
+  }
+}
+
 void loop() {
   uint64_t now = millis();
+#ifdef LIGHT_TEST
+  lightTestCycle();
+  return;
+#endif
   if (conf.ctm_configured) {
     if (socketClosed) { 
       delay(1000);
@@ -250,9 +319,9 @@ void loop() {
         lastPing = now;
       }
     }
-  } else {
-    server.handleClient();
   }
+
+  server.handleClient();
 
   if (digitalRead(RESET_BUTTON) == HIGH) {
     Serial.println("reset pressed");
@@ -276,24 +345,95 @@ void loop() {
 }
 
 void handle_Main() {
-  snprintf(html_buffer, sizeof(html_buffer), "<html>"
+  char led_opts[4][128];
+
+  for (int i = 0; i < 4; ++i) {
+    Serial.printf("led[%d]: %d -> %s\n", i, conf.leds[i], conf.agentNames[i]);
+    if (conf.leds[i] > 0) {
+      snprintf(led_opts[i], sizeof(led_opts[i]), "<option  selected='selected' value='%d'>%s</option>", conf.leds[i], conf.agentNames[i]);
+    } else {
+      memset(led_opts[i], 0, sizeof(led_opts[i]));
+    }
+  }
+
+  snprintf(html_buffer, sizeof(html_buffer), "<!doctype html><html>"
     "<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
     "<link rel=\"icon\" href=\"data:,\">"
+    "<link href='https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css' rel='stylesheet' integrity='sha384-1BmE4kWBq78iYhFldvKuhfTAU6auU8tT94WrHftjDbrCEXSU1oBoqyl2QvZ6jIW3' crossorigin='anonymous'>"
+    "<link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css' integrity='sha512-nMNlpuaDPrqlEls3IX/Q56H36qvBASwb3ipuo3MxeWbsQB1881ox0cRv7UPTgBlriqoynt35KjEwgGUeUXIPnw==' crossorigin='anonymous' referrerpolicy='no-referrer' />"
+    "<script src='https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js' integrity='sha512-894YE6QWD5I59HgZOGReFYm4dnWc1Qt5NtvYSaNcOP+u1T9qYdvdihz0PPSiiqn/+/3e7Jo4EaG7TubfWGUrMQ==' crossorigin='anonymous' referrerpolicy='no-referrer'></script>"
+    "<script src='https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js' integrity='sha384-ka7Sk0Gln4gmtz2MlQnikT1wXgYsOg+OMhuP+IlRH9sENBO0LRn5q+8nbTov4+1p' crossorigin='anonymous'></script>"
+    "<script src='https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js' integrity='sha512-2ImtlRlf2VVmiGZsjm9bEyhjGW4dU7B6TNwh/hx/iSByxNENtj3WVE6o/9Lj4TJeVXPi4bnOIMXFIJJAeufa0A==' crossorigin='anonymous' referrerpolicy='no-referrer'></script>"
     "<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}"
-    ".button { background-color: #4CAF50; border: none; color: white; padding: 16px 40px;"
-    "text-decoration: none; font-size: 30px; margin: 2px; cursor: pointer;}"
-    ".button2 {background-color: #555555;}</style></head>"
-    
-    "<body><h1>Configure your Wifi</h1>"
-    "<form method='POST' action='/conf'>"
-        "<p>%s</p>"
-        "<input type='hidden' name='ssid_config' value='1'/>"
-        "<label>SSID</label><input type='text' name='ssid' value='%s'/><br/>"
-        "<label>PASS</label><input type='text' name='pass' value='%s'/><br/>"
-        "<input type='submit' value='Save'/>"
-        "</form>"
-        "<a href='/link_setup'>Connect Device</a>"
-    "</body></html>", html_error, conf.ssid, conf.pass);
+      ".button { background-color: #4CAF50; border: none; color: white; padding: 16px 40px;"
+      "text-decoration: none; font-size: 30px; margin: 2px; cursor: pointer;}"
+      ".button2 {background-color: #555555;} .logo-trigger_wrapper { display: flex;justify-content: space-between;align-items: center;height: 70px;padding-left: 15px; }  .logo-trigger_wrapper img { width: 232px; }"
+    "</style>"
+    "<title>CTM Status Station</title></head>"
+    "<body>"
+      "<header>"
+        "<div class='logo-trigger_wrapper'><img src='https://www.calltrackingmetrics.com/wp-content/themes/ctm-theme/img/ctm_logo.svg'/></div>"
+      "</header>"
+      "<div class='accordion' id='settings'>"
+        "<div class='accordion-item'>"
+          "<h2 class='accordion-header' id='headingOne'>"
+          "<button class='accordion-button' type='button' data-bs-toggle='collapse' data-bs-target='#collapseOne' aria-expanded='true' aria-controls='collapseOne'>"
+            "Wifi Settings"
+          "</button></h2>"
+          "<div id='collapseOne' class='%s' aria-labelledby='headingOne' data-bs-parent='#accordionExample'>"
+            "<div class='accordion-body'>"
+              "<form method='POST' action='/conf'>"
+                "<p>%s</p>"
+                "<input type='hidden' name='ssid_config' value='1'/>"
+                "<label>SSID</label><input type='text' name='ssid' value='%s'/><br/>"
+                "<label>PASS</label><input type='text' name='pass' value='%s'/><br/>"
+                "<input type='submit' value='Save'/>"
+              "</form>"
+              "<a href='/link_setup'>Connect Device</a>"
+            "</div>"
+          "</div>"
+        "</div>"
+        "<div class='accordion-item'>"
+          "<h2 class='accordion-header' id='headingTwo'>"
+          "<button class='accordion-button' type='button' data-bs-toggle='collapse' data-bs-target='#collapseTwo' aria-expanded='true' aria-controls='collapseTwo'>"
+            "Light Settings"
+          "</button></h2>"
+          "<div id='collapseTwo' class='%s' aria-labelledby='headingTwo' data-bs-parent='#accordionExample'>"
+            "<div class='accordion-body'>"
+            "<p>Each Status Station has 4 LED's connected. Assign an agent to each light. As the agent's status changes from available to busy the light will follow the agent.</p>"
+              "<form method='POST' action='/save_agents'>"
+                "<div class='field'>"
+                  "<label>LED 1</label><select style='width:50%%' class='led-agent' type='text' name='led0'>%s</select> <br/>"
+                  "<input type='hidden' name='agent0' class='agent-name' value='%s'/>"
+                "</div><div class='field'>"
+                  "<label>LED 2</label><select style='width:50%%' class='led-agent' type='text' name='led1'>%s</option></select> <br/>"
+                  "<input type='hidden' name='agent1' class='agent-name' value='%s'/>"
+                "</div><div class='field'>"
+                  "<label>LED 3</label><select style='width:50%%' class='led-agent' type='text' name='led2'>%s</option></select> <br/>"
+                  "<input type='hidden' name='agent2' class='agent-name' value='%s'/>"
+                "</div><div class='field'>"
+                  "<label>LED 4</label><select style='width:50%%' class='led-agent' type='text' name='led3'>%s</option></select> <br/>"
+                  "<input type='hidden' name='agent3' class='agent-name' value='%s'/>"
+                "</div><div class='field'>"
+                "<input type='submit' value='Save'/>"
+              "</form>"
+            "</div>"
+          "</div>"
+        "</div>"
+      "</div>"
+      "<script>"
+"      $('.led-agent').select2({ "
+"  ajax: { "
+"    url: '/agents', "
+"    dataType: 'json' "
+"  } "
+"}).on('change', function(e) { "
+" const l = $(this).closest('.field').find('.select2-selection__rendered').text(); console.log('capture label:', l); $(this).closest('.field').find('input[type=hidden]').val(l); "
+"});"
+      "</script>"
+    "</body></html>", conf.ctm_configured ? "accordion-button collapsed" : "accordion-collapse collapse show", html_error, conf.ssid, conf.pass, conf.ctm_configured ? "accordion-collapse collapse show" : "accordion-button collapsed",
+                      led_opts[0],conf.agentNames[0], led_opts[1],conf.agentNames[1], led_opts[2],conf.agentNames[2],led_opts[3],conf.agentNames[3]);
+
   server.send(200, "text/html", html_buffer);
 }
 
@@ -342,10 +482,9 @@ void handle_LinkSetup() {
     "<form method='POST' action='/link'>"
         "%s"
         "<label>Account ID <input type='hidden' name='account_id' value='%d'/></label>"
-        "<label>Team ID <input type='hidden' name='team_id' value='%d'/></label>"
         "</form>%s"
     "</body></html>", (conf.ctm_configured ? "" : "<input type='submit' value='Connect Device'/>"),
-    conf.account_id, conf.team_id, (conf.ctm_configured ? "<form method='POST' action='/unlink'><input type='submit' value='Unlink Device'/></form>" : ""));
+    conf.account_id, (conf.ctm_configured ? "<form method='POST' action='/unlink'><input type='submit' value='Unlink Device'/></form>" : ""));
   server.send(200, "text/html", html_buffer);
 }
 
@@ -471,9 +610,13 @@ void checkTokenStatus() {
       conf.user_id = (int)obj["user_id"];
       conf.expires_in = (int)obj["expires_in"];
       conf.save();
+      Serial.println("Access token saved - doing one more reboot");
       tp.DotStar_Clear();
       tp.DotStar_SetPixelColor(0, 255, 0);
-      startWebsocket();
+      delay(2000);
+      Serial.println("Rebooting...");
+      delay(1000);
+      ESP.restart();
     }
   }
 }
@@ -508,7 +651,50 @@ void handle_Linked() {
   server.send(200, "text/html", html_buffer);
 }
 
-void handleNotFound(){
+void handle_SaveAgents() {
+  for (int i = 0; i < PIXEL_COUNT; ++i) {
+    String ledkey = String("led") + i;
+    if (server.hasArg(ledkey)) {
+      conf.leds[i] = server.arg(ledkey).toInt();
+    }
+    String agentKey = String("agent") + i;
+    if (server.hasArg(agentKey)) {
+      memcpy(conf.agentNames[i], server.arg(agentKey).c_str(), sizeof(conf.agentNames[i]));
+    }
+  }
+  conf.save();
+  server.sendHeader("Location","/");
+  server.send(303);
+}
+
+void handle_AgentLookup() {
+  String url = String("https://" API_HOST "/api/v1/");
+  if (server.hasArg("q")) {
+    url += "lookup.json?descriptions=1&global=0&idstr=0&object_type=agent&search=" + server.arg("q");
+  } else if (server.hasArg("term")) {
+    url += "lookupids.json?descriptions=1&global=0&idstr=0&object_type=agent&ids[]=" + server.arg("term");
+  } else {
+    url += "lookup.json?descriptions=1&global=0&object_type=agent&idstr=0";
+  }
+  Serial.printf("lookup: %s\n", url.c_str());
+  WiFiClientSecure client;
+  client.setCACert(root_ca);
+  HTTPClient http;
+  http.setConnectTimeout(10000);// timeout in ms
+  http.setTimeout(10000); // 10 seconds
+  http.begin(client, url);
+  http.addHeader("Authorization", String("Bearer ") + conf.access_token);
+
+  int r = http.GET();
+  String body = http.getString();
+  http.end();
+  if (r < 0) {
+    Serial.println("error issuing device request");
+  }
+  server.send(200, "application/json", body);// "{ \"results\": [], \"pagination\": { \"more\": false } }"); // Send HTTP status 404 (Not Found) when there's no handler for the URI in the request
+}
+
+void handleNotFound() {
   server.send(404, "text/plain", "404: Not found"); // Send HTTP status 404 (Not Found) when there's no handler for the URI in the request
 }
 /*
@@ -564,10 +750,10 @@ void socketMessage(websockets::WebsocketsMessage message) {
         Serial.printf("total active %d\n", total);
         if (total > 0) {
           Serial.println("set red");
-          SET_RED
+          setRedAll();
         } else {
           Serial.println("set green");
-          SET_GREEN
+          setGreenAll();
         }
       }
     }

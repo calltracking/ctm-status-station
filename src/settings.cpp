@@ -25,6 +25,10 @@ Settings::Settings() {
   memset(this->refresh_token, 0, 64);
   this->ctm_configured = false;
   this->wifi_configured = false;
+  for (int i =0; i < 4; ++i) {
+    this->leds[i] = 0;
+    memset(this->agentNames[i], 0, sizeof(this->agentNames[i]));
+  }
 }
 
 bool Settings::begin() {
