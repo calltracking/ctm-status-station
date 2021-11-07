@@ -30,6 +30,9 @@ struct Settings {
   int leds[4];
   char agentNames[4][32];
 
+  bool hasAgent(int id);
+  int getAgentLed(int id);
+
 protected:
   uint32_t crc32();
 

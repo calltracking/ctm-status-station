@@ -30,6 +30,23 @@ Settings::Settings() {
     memset(this->agentNames[i], 0, sizeof(this->agentNames[i]));
   }
 }
+bool Settings::hasAgent(int id) {
+  for (int i = 0; i < sizeof(this->leds); ++i) {
+    if (this->leds[i] == id) {
+      return true;
+    }
+  }
+  return false;
+}
+
+int Settings::getAgentLed(int id) {
+  for (int i = 0; i < sizeof(this->leds); ++i) {
+    if (this->leds[i] == id) {
+      return i;
+    }
+  }
+  return -1;
+}
 
 bool Settings::begin() {
   EEPROM.begin(SETTINGS_SIZE);

@@ -104,6 +104,13 @@ uint64_t lastPing = 0;
 
 String captoken;
 bool hasAuthGranted = false;
+typedef struct _Ringer {
+  bool on;
+  bool high;
+  uint64_t lastRing;
+} Ringer;
+#define RINGERS 4
+Ringer ringers[RINGERS]; // set of led's to blink for ringing
 
 TinyPICO tp = TinyPICO();
 WebServer server(80);
@@ -133,6 +140,17 @@ void dnsPreload(const char *name);
 void setRed(int index)   { pixels->setPixelColor(index, pixels->Color(0, 150, 0)); }
 void setGreen(int index) { pixels->setPixelColor(index, pixels->Color(150, 0, 0)); }
 void setBlue(int index)  { pixels->setPixelColor(index, pixels->Color(0, 0, 150)); }
+void setPurple(int index)  { pixels->setPixelColor(index, pixels->Color(0, 150, 150)); }
+void setOrange(int index)  { pixels->setPixelColor(index, pixels->Color(150, 150, 0)); }
+
+void setOff(int index)  { pixels->setPixelColor(index, pixels->Color(0, 0, 0)); }
+void setOffAll() {
+  pixels->clear(); 
+  for (int i = 0; i < PIXEL_COUNT; ++i) {
+    setOff(i);
+  }
+  pixels->show(); 
+}
 void setBlueAll() {
   pixels->clear(); 
   for (int i = 0; i < PIXEL_COUNT; ++i) {
@@ -166,6 +184,11 @@ void setup() {
   pixels = new Adafruit_NeoPixel(PIXEL_COUNT, STATUS_LIGHT_OUT, NEO_GRB + NEO_KHZ800);
   pixels->begin(); // INITIALIZE NeoPixel strip object (REQUIRED)
   setBlueAll();
+  for (int i = 0; i < RINGERS; ++i) {
+    ringers[i].on = false;
+    ringers[i].high = false;
+    ringers[i].lastRing = 0;
+  }
 #ifdef LIGHT_TEST
   delay(1000);
   return;
@@ -227,10 +250,13 @@ void setup() {
   }
 
   if (conf.ctm_user_pending) {
+    Serial.println("pending user configuration to link device");
     linkTimerPending = true;
   } else if (conf.ctm_configured) {
     refreshCapToken();
     startWebsocket();
+  } else {
+    Serial.println("not configured and not pending???");
   }
 }
 void dnsPreload(const char *name) {
@@ -241,6 +267,7 @@ void dnsPreload(const char *name) {
 }
 
 void startWebsocket() {
+  Serial.println("startWebsocket");
   if (captoken.length() > 0) {
 
     tp.DotStar_SetPixelColor(0, 255, 0);
@@ -251,6 +278,9 @@ void startWebsocket() {
     socket.onMessage(socketMessage);
 
     socket.connectSecure(SOC_HOST, 443, "/socket.io/?EIO=3&transport=websocket");//, root_ca);
+    Serial.println("connected to socket server");
+
+    setOffAll(); // start all offline
 
   } else {
     Serial.println("unable to init captoken is invalid!");
@@ -305,8 +335,8 @@ void loop() {
       Serial.println("lost connection - reconnect?");
     } else {
       socket.poll();
-      uint64_t deltaSeconds = (now - lastPing) / 1000;
-      if (deltaSeconds > 25) {
+      int deltaSeconds = (now - lastPing) / 1000;
+      if (deltaSeconds > 20) {
         if (hasAuthGranted) {
           // a maybe more effective ping?
           socket.send(String("42[\"calls.active\",{\"account\":") + conf.account_id + "}]");
@@ -317,6 +347,27 @@ void loop() {
         }
         socket.ping(); // ping every 25 seconds
         lastPing = now;
+      }
+
+      for (int i = 0; i < RINGERS; ++i) {
+        if (ringers[i].on) {
+          int delta = (now - ringers[i].lastRing);
+          //Serial.printf("ringer on for: %d, time past: %d seconds\n", i, delta);
+          if (delta > 500) {
+            if (ringers[i].high) {
+              ringers[i].high = false;
+              Serial.printf("ringer on go low for: %d, time past: %d milliseconds\n", i, delta);
+              setOff(i);
+              pixels->show();
+            } else {
+              ringers[i].high = true;
+              setOrange(i);
+              pixels->show();
+              Serial.printf("ringer on go high for: %d, time past: %d milliseconds\n", i, delta);
+            }
+            ringers[i].lastRing = now;
+          }
+        }
       }
     }
   }
@@ -335,7 +386,7 @@ void loop() {
 
   if (conf.ctm_user_pending) {
     tp.DotStar_CycleColor(25);
-    uint64_t linkCheckStatusDeltaSeconds = (now - lastLinkTimerCheck) / 1000;
+    int linkCheckStatusDeltaSeconds = (now - lastLinkTimerCheck) / 1000;
     if (linkTimerPending && linkCheckStatusDeltaSeconds > 5) {
       lastLinkTimerCheck = now;
       // execution polling status connection check
@@ -713,7 +764,7 @@ void socketMessage(websockets::WebsocketsMessage message) {
   Serial.print("WS(msg): ");
   String data = message.data();
   const char *data_str = data.c_str();
-  Serial.println(data);
+  //Serial.println(data);
 
   if (data == "42[\"access.handshake\"]") {
     StaticJsonDocument<1024> doc;
@@ -740,12 +791,62 @@ void socketMessage(websockets::WebsocketsMessage message) {
     }
     JsonArray msg = doc.as<JsonArray>();
     String action = msg[0];
-    JsonObject fields = msg[1].as<JsonObject>();
+    //JsonObject fields = msg[1].as<JsonObject>();
     Serial.println("received:" + action);
     if (action == "auth.granted") {
       hasAuthGranted = true;
     } else if (action == "message") {
-      if (fields["action"] == "active" && fields["what"] == "call" ) {
+      Serial.println(msg[1].as<String>());
+      DeserializationError error = deserializeJson(doc, msg[1].as<String>());
+      if (error) {
+        Serial.print(F("deserializeJson() failed: "));
+        Serial.println(error.f_str());
+        return;
+      }
+      JsonObject fields = doc.as<JsonObject>();
+      String action = fields["action"];
+      String what   = fields["what"];
+      //Serial.printf("action: '%s', what: '%s'", action.c_str(), what.c_str());
+      // 42["message","{\"time\":1636226258.348542,\"action\":\"status\",\"what\":\"online\",\"data\":{\"id\":19223,\"time\":1636226258.348542}}"]
+      // ["message","{\"time\":1636224415.947346,\"action\":\"agent\",\"what\":\"ringing\",\"data\":{
+      // 42["message","{\"time\":1636224452.3807418,\"action\":\"status\",\"what\":\"inbound\",\"data\":{\"id\":19223,\"time\":1636224452.3807418}}"
+      if (action == "status" || (action == "agent" && what == "ringing")) {
+        int agent_id = fields["data"]["id"];
+        String status = (what == "agent") ? fields["data"]["status"].as<String>() : "";
+        int ledIndex = conf.getAgentLed(agent_id);
+        Serial.printf("status for %d, with led: %d\n", agent_id, ledIndex);
+        if (ledIndex > -1) {
+          // {"action":"status","what":"agent","data":{"id":19223,"sid":"USR043E46722529BCB5F2411A7E1C8C06E1","status":"ringing","from_status":"online","logged_out":0,"queue_total":4}}
+          // {"time":1636234298.814153,"action":"status","what":"online","data":{"id":19223,"time":1636234298.814153}}
+          if (what == "agent" && status == "ringing") {
+            Serial.printf("toggle ringing for agent at %d\n", ledIndex);
+            ringers[ledIndex].on = true;
+            ringers[ledIndex].lastRing = millis();
+          } else {
+            ringers[ledIndex].on = false;
+            if (what == "agent" && (status == "inbound" || status == "outbound" || status == "video_member")) {
+              Serial.printf("%d, with led: %d set red\n", agent_id, ledIndex);
+              setRed(ledIndex);
+              pixels->show();
+            } else if (what == "agent" && status == "wrapup") {
+              Serial.printf("%d, with led: %d set blue\n", agent_id, ledIndex);
+              setPurple(ledIndex);
+              pixels->show();
+            } else if (what == "offline" || status == "offline") {
+              Serial.printf("%d, with led: %d set blue\n", agent_id, ledIndex);
+              setOff(ledIndex);
+              pixels->show();
+            } else if (what == "agent" || (action == "status" && what == "online")) {
+              Serial.printf("%d, with led: %d set green\n", agent_id, ledIndex);
+              setGreen(ledIndex);
+              pixels->show();
+            }
+          }
+        }
+      }
+
+      // we could use the following for a global status of inbound calls etc...
+      /*if (fields["action"] == "active" && fields["what"] == "call" ) {
         int total = atoi((const char*)fields["data"]);
         Serial.printf("total active %d\n", total);
         if (total > 0) {
@@ -755,7 +856,7 @@ void socketMessage(websockets::WebsocketsMessage message) {
           Serial.println("set green");
           setGreenAll();
         }
-      }
+      }*/
     }
   } else {
     Serial.printf("header packets? '%s'\n", data_str);
