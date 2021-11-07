@@ -118,6 +118,7 @@ Settings conf;
 websockets::WebsocketsClient socket;
 
 Adafruit_NeoPixel *pixels;
+bool hasSocketConnected = false;
 
 void handle_Main();
 void handle_Conf();
@@ -277,8 +278,13 @@ void startWebsocket() {
     socket.onEvent(socketEvent);
     socket.onMessage(socketMessage);
 
-    socket.connectSecure(SOC_HOST, 443, "/socket.io/?EIO=3&transport=websocket");//, root_ca);
-    Serial.println("connected to socket server");
+    if (!socket.connectSecure(SOC_HOST, 443, "/socket.io/?EIO=3&transport=websocket")) {
+      Serial.println("Error connecting");
+      hasSocketConnected = false;
+    } else {
+      Serial.println("connected to socket server");
+      hasSocketConnected = true;
+    }
 
     setOffAll(); // start all offline
 
@@ -330,9 +336,12 @@ void loop() {
   return;
 #endif
   if (conf.ctm_configured) {
-    if (socketClosed) { 
+    if (socketClosed || !hasSocketConnected) { 
       delay(1000);
       Serial.println("lost connection - reconnect?");
+      // try to reconnect
+      refreshCapToken();
+      startWebsocket();
     } else {
       socket.poll();
       int deltaSeconds = (now - lastPing) / 1000;
@@ -866,10 +875,14 @@ void socketMessage(websockets::WebsocketsMessage message) {
 void socketEvent(websockets::WebsocketsEvent event, String data) {
   if (event == websockets::WebsocketsEvent::ConnectionOpened) {
     socketClosed  = false;
+    hasSocketConnected = true;
     Serial.println("WS(evt): Connnection Opened");
+    pixels->clear();
   } else if (event == websockets::WebsocketsEvent::ConnectionClosed) {
     socketClosed  = true;
+    hasSocketConnected = false;
     Serial.println("WS(evt): Connnection Closed");
+    pixels->clear();
   } else if (event == websockets::WebsocketsEvent::GotPing) {
     Serial.println("WS(evt): Got a Ping!");
     socket.pong();
