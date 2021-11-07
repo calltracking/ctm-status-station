@@ -254,7 +254,6 @@ void setup() {
     Serial.println("pending user configuration to link device");
     linkTimerPending = true;
   } else if (conf.ctm_configured) {
-    refreshCapToken();
     startWebsocket();
   } else {
     Serial.println("not configured and not pending???");
@@ -268,6 +267,7 @@ void dnsPreload(const char *name) {
 }
 
 void startWebsocket() {
+  refreshCapToken();
   Serial.println("startWebsocket");
   if (captoken.length() > 0) {
 
@@ -289,7 +289,9 @@ void startWebsocket() {
     setOffAll(); // start all offline
 
   } else {
-    Serial.println("unable to init captoken is invalid!");
+    Serial.printf("unable to init captoken '%s' is invalid!\n", captoken.c_str());
+    hasSocketConnected = false;
+    socketClosed = true;
     tp.DotStar_SetPixelColor(100, 255, 100);
   }
 }
@@ -340,7 +342,6 @@ void loop() {
       delay(1000);
       Serial.println("lost connection - reconnect?");
       // try to reconnect
-      refreshCapToken();
       startWebsocket();
     } else {
       socket.poll();
@@ -659,7 +660,7 @@ void checkTokenStatus() {
     if (obj.containsKey("error")) {
       Serial.println("link error");
       linkError = true;
-    } else {
+    } else if (obj.containsKey("access_token") && obj.containsKey("account_id") && obj.containsKey("user_id")) {
       Serial.println("link success!");
       linkError = false;
       conf.account_id = (int)obj["account_id"];
@@ -893,6 +894,11 @@ void socketEvent(websockets::WebsocketsEvent event, String data) {
 void refreshCapToken(int attempts) {
   captoken  = ""; // set to empty
   if (!conf.ctm_configured || !conf.access_token || !conf.account_id) {
+    Serial.printf("unable to refresh token missing access token, account id or not configured yet? '%s'\n", conf.refresh_token);
+    if (conf.refresh_token && attempts < 2) {
+      refreshAccessToken();
+      return refreshCapToken(attempts+1);
+    }
     return;
   }
   Serial.println(String("fetch with access token:") + conf.access_token);
@@ -938,13 +944,20 @@ void refreshCapToken(int attempts) {
     if (!linkError) {
       return refreshCapToken(attempts+1);
     }
+  } else if (doc.containsKey("authentication") && attempts < 1) {
+    Serial.println("failed to get token try refreshing access token");
+    refreshAccessToken();
+    if (!linkError) {
+      return refreshCapToken(attempts+1);
+    }
   }
   captoken = (const char*)obj["token"]; // capture the token at start up
   Serial.println("captoken:");
   Serial.println(captoken);
 }
 void refreshAccessToken() {
-  if (!conf.ctm_configured || !conf.access_token || !conf.refresh_token) {
+  if (!conf.ctm_configured || !conf.refresh_token) {
+    Serial.println("unable to refresh without a refresh token!");
     return;
   }
   const char *url = "https://" API_HOST "/oauth2/token";
@@ -976,10 +989,11 @@ void refreshAccessToken() {
     return;
   }
   JsonObject obj = doc.as<JsonObject>();
+  Serial.printf("refresh_token: %s, user_id: %d, account_id: %d\n", conf.refresh_token, conf.user_id, conf.account_id);
   if (obj.containsKey("error")) {
     Serial.println("refresh error");
     linkError = true;
-  } else {
+  } else if (obj.containsKey("access_token") && obj.containsKey("account_id")) {
     Serial.println("refresh success!");
     linkError = false;
     conf.account_id = (int)obj["account_id"];
