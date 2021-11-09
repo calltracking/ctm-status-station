@@ -11,6 +11,13 @@ struct Settings {
   bool save();  // writes this datastructure to eeprom with a crc32 checksum
   bool good();  // checks the data saved and confirms whether it looks reasonable and likely good for use e.g. the data is reasonable
 
+  void reset(); // reset all settings
+
+  bool ledsConfigured();
+
+  bool hasAgent(int id);
+  int getAgentLed(int id);
+
   char ssid[32]; // wifi ssid
   char pass[32]; // password ssid
 
@@ -30,8 +37,6 @@ struct Settings {
   int leds[4];
   char agentNames[4][32];
 
-  bool hasAgent(int id);
-  int getAgentLed(int id);
 
 protected:
   uint32_t crc32();

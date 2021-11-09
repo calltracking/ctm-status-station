@@ -1,7 +1,7 @@
 /**
  * configure and listen for account or team events
  */
-//#define CTM_PRODUCTION
+#define CTM_PRODUCTION
 //#define LIGHT_TEST
 #include <TinyPICO.h>
 #include <WiFi.h>
@@ -180,6 +180,9 @@ void setup() {
 
   delay(3000);
   conf.begin();
+  if (conf.ssid && conf.pass) {
+    Serial.printf("ssid: %s, pass: %s\n", conf.ssid, conf.pass);
+  }
   pinMode(RESET_BUTTON, INPUT_PULLDOWN);
 
   pixels = new Adafruit_NeoPixel(PIXEL_COUNT, STATUS_LIGHT_OUT, NEO_GRB + NEO_KHZ800);
@@ -201,11 +204,10 @@ void setup() {
     WiFi.begin(conf.ssid, conf.pass);
     if (WiFi.waitForConnectResult() != WL_CONNECTED) {
       Serial.println("Connection Failed!");
+      setRedAll();
       delay(2000);
       Serial.println("Reset SSID...");
-      memset(conf.ssid, 0, 32);
-      memset(conf.pass, 0, 32);
-      conf.wifi_configured = false;
+      conf.reset();
       conf.save();
       delay(2000);
       Serial.println("Rebooting...");
@@ -256,7 +258,7 @@ void setup() {
   } else if (conf.ctm_configured) {
     startWebsocket();
   } else {
-    Serial.println("not configured and not pending???");
+    Serial.println("device is reset");
   }
 }
 void dnsPreload(const char *name) {
@@ -267,8 +269,8 @@ void dnsPreload(const char *name) {
 }
 
 void startWebsocket() {
-  refreshCapToken();
   Serial.println("startWebsocket");
+  refreshCapToken();
   if (captoken.length() > 0) {
 
     tp.DotStar_SetPixelColor(0, 255, 0);
@@ -386,8 +388,7 @@ void loop() {
 
   if (digitalRead(RESET_BUTTON) == HIGH) {
     Serial.println("reset pressed");
-    conf.ctm_configured = false;
-    conf.wifi_configured = false;
+    conf.reset();
     conf.save();
     delay(2000);
     ESP.restart();
@@ -406,10 +407,38 @@ void loop() {
 }
 
 void handle_Main() {
+  Serial.print("requesting /");
+  if (!conf.wifi_configured) {
+    snprintf(html_buffer, sizeof(html_buffer), "<!doctype html><html>"
+      "<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+      "<link rel=\"icon\" href=\"data:,\">"
+      "<style>"
+        "html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}"
+        ".button { background-color: #4CAF50; border: none; color: white; padding: 16px 40px;"
+        "text-decoration: none; font-size: 30px; margin: 2px; cursor: pointer;}"
+      "</style>"
+      "<title>CTM Status Station</title></head>"
+      "<body>"
+        "<header>"
+          "<div class='logo-trigger_wrapper'>Configure the Wifi</div>"
+        "</header>"
+        "<form method='POST' action='/conf'>"
+          "<p>%s</p>"
+          "<input type='hidden' name='ssid_config' value='1'/>"
+          "<label>SSID</label><input type='text' name='ssid' value='%s'/><br/>"
+          "<label>PASS</label><input type='text' name='pass' value='%s'/><br/>"
+          "<input type='submit' value='Save'/>"
+        "</form>"
+        "</body>"
+        "</html>", html_error, conf.ssid, conf.pass);
+    Serial.println("  200 OK");
+    server.send(200, "text/html", html_buffer);
+    return;
+  }
   char led_opts[4][128];
 
   for (int i = 0; i < 4; ++i) {
-    Serial.printf("led[%d]: %d -> %s\n", i, conf.leds[i], conf.agentNames[i]);
+    //Serial.printf("led[%d]: %d -> %s\n", i, conf.leds[i], conf.agentNames[i]);
     if (conf.leds[i] > 0) {
       snprintf(led_opts[i], sizeof(led_opts[i]), "<option  selected='selected' value='%d'>%s</option>", conf.leds[i], conf.agentNames[i]);
     } else {
@@ -495,6 +524,7 @@ void handle_Main() {
     "</body></html>", conf.ctm_configured ? "accordion-button collapsed" : "accordion-collapse collapse show", html_error, conf.ssid, conf.pass, conf.ctm_configured ? "accordion-collapse collapse show" : "accordion-button collapsed",
                       led_opts[0],conf.agentNames[0], led_opts[1],conf.agentNames[1], led_opts[2],conf.agentNames[2],led_opts[3],conf.agentNames[3]);
 
+  Serial.println("  200 OK");
   server.send(200, "text/html", html_buffer);
 }
 
@@ -805,8 +835,9 @@ void socketMessage(websockets::WebsocketsMessage message) {
     Serial.println("received:" + action);
     if (action == "auth.granted") {
       hasAuthGranted = true;
-    } else if (action == "message") {
-      Serial.println(msg[1].as<String>());
+    } else if (action == "message" && hasAuthGranted) {
+      Serial.printf("message: '%s'\n", data_str);
+      //Serial.println(msg[1].as<String>());
       DeserializationError error = deserializeJson(doc, msg[1].as<String>());
       if (error) {
         Serial.print(F("deserializeJson() failed: "));
@@ -814,62 +845,52 @@ void socketMessage(websockets::WebsocketsMessage message) {
         return;
       }
       JsonObject fields = doc.as<JsonObject>();
-      String action = fields["action"];
-      String what   = fields["what"];
-      //Serial.printf("action: '%s', what: '%s'", action.c_str(), what.c_str());
-      // 42["message","{\"time\":1636226258.348542,\"action\":\"status\",\"what\":\"online\",\"data\":{\"id\":19223,\"time\":1636226258.348542}}"]
-      // ["message","{\"time\":1636224415.947346,\"action\":\"agent\",\"what\":\"ringing\",\"data\":{
-      // 42["message","{\"time\":1636224452.3807418,\"action\":\"status\",\"what\":\"inbound\",\"data\":{\"id\":19223,\"time\":1636224452.3807418}}"
-      if (action == "status" || (action == "agent" && what == "ringing")) {
-        int agent_id = fields["data"]["id"];
-        String status = (what == "agent") ? fields["data"]["status"].as<String>() : "";
-        int ledIndex = conf.getAgentLed(agent_id);
-        Serial.printf("status for %d, with led: %d\n", agent_id, ledIndex);
-        if (ledIndex > -1) {
-          // {"action":"status","what":"agent","data":{"id":19223,"sid":"USR043E46722529BCB5F2411A7E1C8C06E1","status":"ringing","from_status":"online","logged_out":0,"queue_total":4}}
-          // {"time":1636234298.814153,"action":"status","what":"online","data":{"id":19223,"time":1636234298.814153}}
-          if (what == "agent" && status == "ringing") {
-            Serial.printf("toggle ringing for agent at %d\n", ledIndex);
-            ringers[ledIndex].on = true;
-            ringers[ledIndex].lastRing = millis();
-          } else {
-            ringers[ledIndex].on = false;
-            if (what == "agent" && (status == "inbound" || status == "outbound" || status == "video_member")) {
-              Serial.printf("%d, with led: %d set red\n", agent_id, ledIndex);
-              setRed(ledIndex);
-              pixels->show();
-            } else if (what == "agent" && status == "wrapup") {
-              Serial.printf("%d, with led: %d set blue\n", agent_id, ledIndex);
-              setPurple(ledIndex);
-              pixels->show();
-            } else if (what == "offline" || status == "offline") {
-              Serial.printf("%d, with led: %d set blue\n", agent_id, ledIndex);
-              setOff(ledIndex);
-              pixels->show();
-            } else if (what == "agent" || (action == "status" && what == "online")) {
-              Serial.printf("%d, with led: %d set green\n", agent_id, ledIndex);
-              setGreen(ledIndex);
-              pixels->show();
+      if (fields.containsKey("action") && fields.containsKey("what") && fields.containsKey("data") && conf.ledsConfigured()) {
+        String action = fields["action"];
+        String what   = fields["what"];
+        // {"time":1636468005.6600325,"action":"status","what":"chat","data":{"id":423084,"time":1636468005.6600325}} and then boom?
+        //Serial.printf("action: '%s', what: '%s'", action.c_str(), what.c_str());
+        // 42["message","{\"time\":1636226258.348542,\"action\":\"status\",\"what\":\"online\",\"data\":{\"id\":19223,\"time\":1636226258.348542}}"]
+        // ["message","{\"time\":1636224415.947346,\"action\":\"agent\",\"what\":\"ringing\",\"data\":{
+        // 42["message","{\"time\":1636224452.3807418,\"action\":\"status\",\"what\":\"inbound\",\"data\":{\"id\":19223,\"time\":1636224452.3807418}}"
+        if ((action == "status" || (action == "agent" && what == "ringing")) && fields["data"].containsKey("id")) {
+          int agent_id = fields["data"]["id"];
+          String status = (what == "agent" && fields["data"].containsKey("status")) ? fields["data"]["status"].as<String>() : "";
+          int ledIndex = conf.getAgentLed(agent_id);
+          //Serial.printf("status for %d, with led: %d\n", agent_id, ledIndex);
+          if (ledIndex > -1 && ledIndex < 4) {
+            // {"action":"status","what":"agent","data":{"id":19223,"sid":"USR043E46722529BCB5F2411A7E1C8C06E1","status":"ringing","from_status":"online","logged_out":0,"queue_total":4}}
+            // {"time":1636234298.814153,"action":"status","what":"online","data":{"id":19223,"time":1636234298.814153}}
+            if (what == "agent" && status == "ringing") {
+              Serial.printf("toggle ringing for agent at %d\n", ledIndex);
+              ringers[ledIndex].on = true;
+              ringers[ledIndex].lastRing = millis();
+            } else {
+              ringers[ledIndex].on = false;
+              if (what == "agent" && (status == "inbound" || status == "outbound" || status == "video_member")) {
+                Serial.printf("%d, with led: %d set red\n", agent_id, ledIndex);
+                setRed(ledIndex);
+                pixels->show();
+              } else if (what == "agent" && status == "wrapup") {
+                Serial.printf("%d, with led: %d set blue\n", agent_id, ledIndex);
+                setPurple(ledIndex);
+                pixels->show();
+              } else if (what == "offline" || status == "offline") {
+                Serial.printf("%d, with led: %d set blue\n", agent_id, ledIndex);
+                setOff(ledIndex);
+                pixels->show();
+              } else if (what == "agent" || (action == "status" && what == "online")) {
+                Serial.printf("%d, with led: %d set green\n", agent_id, ledIndex);
+                setGreen(ledIndex);
+                pixels->show();
+              }
             }
           }
         }
       }
-
-      // we could use the following for a global status of inbound calls etc...
-      /*if (fields["action"] == "active" && fields["what"] == "call" ) {
-        int total = atoi((const char*)fields["data"]);
-        Serial.printf("total active %d\n", total);
-        if (total > 0) {
-          Serial.println("set red");
-          setRedAll();
-        } else {
-          Serial.println("set green");
-          setGreenAll();
-        }
-      }*/
     }
   } else {
-    Serial.printf("header packets? '%s'\n", data_str);
+   // Serial.printf("header packets? '%s'\n", data_str);
   }
 }
 // see: https://github.com/Links2004/arduinoWebSockets/blob/master/examples/esp32/WebSocketClientSocketIOack/WebSocketClientSocketIOack.ino

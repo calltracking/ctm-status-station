@@ -19,10 +19,20 @@ template <class T> int EEPROM_read(int ee, T& value) {
   return i;
 }
 Settings::Settings() {
+  this->reset();
+}
+
+void Settings::reset() {
+  this->ctm_configured = false;
+  this->wifi_configured = false;
   memset(this->ssid, 0, 32);
   memset(this->pass, 0, 32);
   memset(this->access_token, 0, 64);
   memset(this->refresh_token, 0, 64);
+  memset(this->device_code, 0, 64);
+  memset(this->leds, 0, 4);
+  memset(this->agentNames, 0, 4);
+  this->expires_in = 0;
   this->ctm_configured = false;
   this->wifi_configured = false;
   for (int i =0; i < 4; ++i) {
@@ -31,7 +41,7 @@ Settings::Settings() {
   }
 }
 bool Settings::hasAgent(int id) {
-  for (int i = 0; i < sizeof(this->leds); ++i) {
+  for (int i = 0; i < 4; ++i) {
     if (this->leds[i] == id) {
       return true;
     }
@@ -40,12 +50,20 @@ bool Settings::hasAgent(int id) {
 }
 
 int Settings::getAgentLed(int id) {
-  for (int i = 0; i < sizeof(this->leds); ++i) {
+  for (int i = 0; i < 4; ++i) {
     if (this->leds[i] == id) {
       return i;
     }
   }
   return -1;
+}
+bool Settings::ledsConfigured() {
+  for (int i = 0; i < 4; ++i) {
+    if (this->leds[i] > 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool Settings::begin() {
