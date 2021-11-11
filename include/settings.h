@@ -1,6 +1,8 @@
 #ifndef __SETTINGS___H_
 #define __SETTINGS___H_
 
+#define LED_COUNT 9
+
 #include <EEPROM.h>
 
 struct Settings {
@@ -12,6 +14,7 @@ struct Settings {
   bool good();  // checks the data saved and confirms whether it looks reasonable and likely good for use e.g. the data is reasonable
 
   void reset(); // reset all settings
+  void resetAgentLeds();
 
   bool ledsConfigured();
 
@@ -34,8 +37,8 @@ struct Settings {
   char refresh_token[128];
 
   // map agents to led's
-  int leds[4];
-  char agentNames[4][32];
+  int leds[LED_COUNT];
+  char agentNames[LED_COUNT][32];
 
 
 protected:

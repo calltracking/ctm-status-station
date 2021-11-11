@@ -30,18 +30,22 @@ void Settings::reset() {
   memset(this->access_token, 0, 64);
   memset(this->refresh_token, 0, 64);
   memset(this->device_code, 0, 64);
-  memset(this->leds, 0, 4);
-  memset(this->agentNames, 0, 4);
+  memset(this->leds, 0, LED_COUNT);
+  memset(this->agentNames, 0, LED_COUNT);
   this->expires_in = 0;
   this->ctm_configured = false;
   this->wifi_configured = false;
-  for (int i =0; i < 4; ++i) {
+  this->resetAgentLeds();
+}
+void Settings::resetAgentLeds() {
+  for (int i =0; i < LED_COUNT; ++i) {
     this->leds[i] = 0;
-    memset(this->agentNames[i], 0, sizeof(this->agentNames[i]));
+    memset(this->agentNames[i], 0, 32);
   }
 }
+
 bool Settings::hasAgent(int id) {
-  for (int i = 0; i < 4; ++i) {
+  for (int i = 0; i < LED_COUNT; ++i) {
     if (this->leds[i] == id) {
       return true;
     }
@@ -50,7 +54,7 @@ bool Settings::hasAgent(int id) {
 }
 
 int Settings::getAgentLed(int id) {
-  for (int i = 0; i < 4; ++i) {
+  for (int i = 0; i < LED_COUNT; ++i) {
     if (this->leds[i] == id) {
       return i;
     }
@@ -58,7 +62,7 @@ int Settings::getAgentLed(int id) {
   return -1;
 }
 bool Settings::ledsConfigured() {
-  for (int i = 0; i < 4; ++i) {
+  for (int i = 0; i < LED_COUNT; ++i) {
     if (this->leds[i] > 0) {
       return true;
     }

@@ -19,7 +19,6 @@
 
 #define RESET_BUTTON 27
 #define STATUS_LIGHT_OUT 25
-#define PIXEL_COUNT 4
 
 #ifdef CTM_PRODUCTION
 #define APP_HOST "app.calltrackingmetrics.com"
@@ -133,6 +132,7 @@ void handleNotFound();
 void checkTokenStatus();
 void socketEvent(websockets::WebsocketsEvent event, String data);
 void socketMessage(websockets::WebsocketsMessage message);
+void updateAgentStatusLed(int index, const String status);
 void refreshAccessToken();
 void refreshCapToken(int attempts=0);
 void startWebsocket();
@@ -147,31 +147,72 @@ void setOrange(int index)  { pixels->setPixelColor(index, pixels->Color(150, 150
 void setOff(int index)  { pixels->setPixelColor(index, pixels->Color(0, 0, 0)); }
 void setOffAll() {
   pixels->clear(); 
-  for (int i = 0; i < PIXEL_COUNT; ++i) {
+  for (int i = 0; i < LED_COUNT; ++i) {
     setOff(i);
   }
   pixels->show(); 
 }
 void setBlueAll() {
   pixels->clear(); 
-  for (int i = 0; i < PIXEL_COUNT; ++i) {
+  for (int i = 0; i < LED_COUNT; ++i) {
     setBlue(i);
   }
   pixels->show(); 
 }
 void setRedAll() {
   pixels->clear(); 
-  for (int i = 0; i < PIXEL_COUNT; ++i) {
+  for (int i = 0; i < LED_COUNT; ++i) {
     setRed(i);
   }
   pixels->show(); 
 }
 void setGreenAll() {
   pixels->clear(); 
-  for (int i = 0; i < PIXEL_COUNT; ++i) {
+  for (int i = 0; i < LED_COUNT; ++i) {
     setGreen(i);
   }
   pixels->show(); 
+}
+
+void refreshAllAgentStatus();
+
+// fetch current status information for the given agent for the led at index
+void fetchLedAgentStatus(int index) {
+  if (!conf.leds[index]) { return; }
+  int agentId = conf.leds[index];
+  Serial.printf("fetching status for agent: %d\n", agentId);
+  WiFiClientSecure client;
+  HTTPClient http;
+  client.setCACert(root_ca);
+  String url = String("https://"  API_HOST   "/api/v1/accounts/") + conf.account_id + "/users/" + agentId;
+  http.setConnectTimeout(10000);// timeout in ms
+  http.setTimeout(10000); // 10 seconds
+  http.begin(client, url);
+  http.addHeader("Authorization", String("Bearer ") + conf.access_token);
+  int r = http.GET();
+  String body = http.getString();
+  http.end();
+  if (r < 0) {
+    Serial.println("error issuing device request");
+    return;
+  }
+  StaticJsonDocument<1024> doc;
+  DeserializationError error = deserializeJson(doc, body);
+  if (error) {
+    Serial.print(F("deserializeJson() failed: "));
+    Serial.println(error.f_str());
+    return;
+  }
+  JsonObject obj = doc.as<JsonObject>();
+  if (strlen(conf.agentNames[index]) == 0) {
+    Serial.printf("updating missing name data for agent: %s  %s\n", (const char*)obj["first_name"], (const char*)obj["last_name"]);
+    snprintf(conf.agentNames[index], 32, "%s %s", (const char*)obj["first_name"], (const char*)obj["last_name"]);
+    conf.save();
+  }
+
+  Serial.printf("got status: %s for led %d\n", (const char*)obj["status"], index);
+
+  updateAgentStatusLed(index, obj["status"]);
 }
 
 void setup() {
@@ -185,7 +226,7 @@ void setup() {
   }
   pinMode(RESET_BUTTON, INPUT_PULLDOWN);
 
-  pixels = new Adafruit_NeoPixel(PIXEL_COUNT, STATUS_LIGHT_OUT, NEO_GRB + NEO_KHZ800);
+  pixels = new Adafruit_NeoPixel(LED_COUNT, STATUS_LIGHT_OUT, NEO_GRB + NEO_KHZ800);
   pixels->begin(); // INITIALIZE NeoPixel strip object (REQUIRED)
   setBlueAll();
   for (int i = 0; i < RINGERS; ++i) {
@@ -258,6 +299,8 @@ void setup() {
   } else if (conf.ctm_configured) {
     startWebsocket();
   } else {
+    conf.resetAgentLeds();
+    conf.save();
     Serial.println("device is reset");
   }
 }
@@ -288,7 +331,8 @@ void startWebsocket() {
       hasSocketConnected = true;
     }
 
-    setOffAll(); // start all offline
+    setOffAll();
+    refreshAllAgentStatus();
 
   } else {
     Serial.printf("unable to init captoken '%s' is invalid!\n", captoken.c_str());
@@ -301,7 +345,7 @@ void startWebsocket() {
 void lightTestCycle() {
   pixels->clear();
   delay(500); // Pause before next pass through loop
-  for(int i=0; i< PIXEL_COUNT; ++i) { // For each pixel...
+  for(int i=0; i< LED_COUNT; ++i) { // For each pixel...
     Serial.printf("set:%d\n", i);
     delay(500); // Pause before next pass through loop
     pixels->setPixelColor(i, pixels->Color(0, 0, 0));
@@ -435,29 +479,61 @@ void handle_Main() {
     server.send(200, "text/html", html_buffer);
     return;
   }
-  char led_opts[4][128];
+  char led_opts[LED_COUNT][128];
+  int led_opt_size = 0;
 
-  for (int i = 0; i < 4; ++i) {
+  for (int i = 0; i < LED_COUNT; ++i) {
     //Serial.printf("led[%d]: %d -> %s\n", i, conf.leds[i], conf.agentNames[i]);
     if (conf.leds[i] > 0) {
       snprintf(led_opts[i], sizeof(led_opts[i]), "<option  selected='selected' value='%d'>%s</option>", conf.leds[i], conf.agentNames[i]);
     } else {
       memset(led_opts[i], 0, sizeof(led_opts[i]));
     }
+    led_opt_size += strlen(led_opts[i]) + 1;
   }
 
-  snprintf(html_buffer, sizeof(html_buffer), "<!doctype html><html>"
+  const char *markup_for_led_selector =  "<div class='field'>"
+                  "<label>LED %d</label><select style='width:300px' class='led-agent' type='text' name='led%d'>%s</select> <br/>"
+                  "<input type='hidden' name='agent%d' class='agent-name' value='%s'/>"
+                "</div>";
+
+  int single_led_size = (strlen(markup_for_led_selector) + 32); // plus 32 for agent name hidden field
+  int markup_led_size = (LED_COUNT * single_led_size) + led_opt_size;
+  char *led_input_buffer = (char*)malloc(markup_led_size);
+  int offset = 0;
+  // append the led markup into led_input_buffer
+  for (int i = 0; i < LED_COUNT; ++i) {// <option  selected='selected' value='%d'>%s</option>
+    char *offsetpointer = led_input_buffer+offset;
+    snprintf(led_input_buffer+offset, (single_led_size + strlen(led_opts[i])), markup_for_led_selector,
+             (i+1), i, led_opts[i], i, conf.agentNames[i]);
+    Serial.printf("\tinput: %s is %d long\n", offsetpointer, strlen(offsetpointer));
+    offset += strlen(offsetpointer);
+  }
+  Serial.println("\n\n\n####################\n");
+  Serial.println(led_input_buffer);
+
+  const char *fmt_string = "<!doctype html><html>"
     "<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
     "<link rel=\"icon\" href=\"data:,\">"
-    "<link href='https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css' rel='stylesheet' integrity='sha384-1BmE4kWBq78iYhFldvKuhfTAU6auU8tT94WrHftjDbrCEXSU1oBoqyl2QvZ6jIW3' crossorigin='anonymous'>"
-    "<link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css' integrity='sha512-nMNlpuaDPrqlEls3IX/Q56H36qvBASwb3ipuo3MxeWbsQB1881ox0cRv7UPTgBlriqoynt35KjEwgGUeUXIPnw==' crossorigin='anonymous' referrerpolicy='no-referrer' />"
-    "<script src='https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js' integrity='sha512-894YE6QWD5I59HgZOGReFYm4dnWc1Qt5NtvYSaNcOP+u1T9qYdvdihz0PPSiiqn/+/3e7Jo4EaG7TubfWGUrMQ==' crossorigin='anonymous' referrerpolicy='no-referrer'></script>"
-    "<script src='https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js' integrity='sha384-ka7Sk0Gln4gmtz2MlQnikT1wXgYsOg+OMhuP+IlRH9sENBO0LRn5q+8nbTov4+1p' crossorigin='anonymous'></script>"
-    "<script src='https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js' integrity='sha512-2ImtlRlf2VVmiGZsjm9bEyhjGW4dU7B6TNwh/hx/iSByxNENtj3WVE6o/9Lj4TJeVXPi4bnOIMXFIJJAeufa0A==' crossorigin='anonymous' referrerpolicy='no-referrer'></script>"
+    "<link href='https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css' rel='stylesheet' "
+           "integrity='sha384-1BmE4kWBq78iYhFldvKuhfTAU6auU8tT94WrHftjDbrCEXSU1oBoqyl2QvZ6jIW3' crossorigin='anonymous'>"
+    "<link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css' "
+          "integrity='sha512-nMNlpuaDPrqlEls3IX/Q56H36qvBASwb3ipuo3MxeWbsQB1881ox0cRv7UPTgBlriqoynt35KjEwgGUeUXIPnw==' "
+          "crossorigin='anonymous' referrerpolicy='no-referrer' />"
+    "<script src='https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js' "
+            "integrity='sha512-894YE6QWD5I59HgZOGReFYm4dnWc1Qt5NtvYSaNcOP+u1T9qYdvdihz0PPSiiqn/+/3e7Jo4EaG7TubfWGUrMQ==' "
+            "crossorigin='anonymous' referrerpolicy='no-referrer'></script>"
+    "<script src='https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js' "
+            "integrity='sha384-ka7Sk0Gln4gmtz2MlQnikT1wXgYsOg+OMhuP+IlRH9sENBO0LRn5q+8nbTov4+1p' crossorigin='anonymous'></script>"
+    "<script src='https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js' "
+            "integrity='sha512-2ImtlRlf2VVmiGZsjm9bEyhjGW4dU7B6TNwh/hx/iSByxNENtj3WVE6o/9Lj4TJeVXPi4bnOIMXFIJJAeufa0A==' "
+            "crossorigin='anonymous' referrerpolicy='no-referrer'></script>"
     "<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}"
       ".button { background-color: #4CAF50; border: none; color: white; padding: 16px 40px;"
       "text-decoration: none; font-size: 30px; margin: 2px; cursor: pointer;}"
-      ".button2 {background-color: #555555;} .logo-trigger_wrapper { display: flex;justify-content: space-between;align-items: center;height: 70px;padding-left: 15px; }  .logo-trigger_wrapper img { width: 232px; }"
+      ".button2 {background-color: #555555;} "
+      ".logo-trigger_wrapper { display: flex;justify-content: space-between;align-items: center;height: 70px;padding-left: 15px; } "
+      ".logo-trigger_wrapper img { width: 232px; }"
     "</style>"
     "<title>CTM Status Station</title></head>"
     "<body>"
@@ -467,7 +543,8 @@ void handle_Main() {
       "<div class='accordion' id='settings'>"
         "<div class='accordion-item'>"
           "<h2 class='accordion-header' id='headingOne'>"
-          "<button class='accordion-button' type='button' data-bs-toggle='collapse' data-bs-target='#collapseOne' aria-expanded='true' aria-controls='collapseOne'>"
+          "<button class='accordion-button' type='button' data-bs-toggle='collapse' data-bs-target='#collapseOne' aria-expanded='false' "
+          " aria-controls='collapseOne'>"
             "Wifi Settings"
           "</button></h2>"
           "<div id='collapseOne' class='%s' aria-labelledby='headingOne' data-bs-parent='#accordionExample'>"
@@ -476,7 +553,7 @@ void handle_Main() {
                 "<p>%s</p>"
                 "<input type='hidden' name='ssid_config' value='1'/>"
                 "<label>SSID</label><input type='text' name='ssid' value='%s'/><br/>"
-                "<label>PASS</label><input type='text' name='pass' value='%s'/><br/>"
+                "<label>PASS</label><input type='password' name='pass' value='%s'/><br/>"
                 "<input type='submit' value='Save'/>"
               "</form>"
               "<a href='/link_setup'>Connect Device</a>"
@@ -485,26 +562,16 @@ void handle_Main() {
         "</div>"
         "<div class='accordion-item'>"
           "<h2 class='accordion-header' id='headingTwo'>"
-          "<button class='accordion-button' type='button' data-bs-toggle='collapse' data-bs-target='#collapseTwo' aria-expanded='true' aria-controls='collapseTwo'>"
+          "<button class='accordion-button' type='button' data-bs-toggle='collapse' data-bs-target='#collapseTwo' "
+          " aria-expanded='false' aria-controls='collapseTwo'>"
             "Light Settings"
           "</button></h2>"
           "<div id='collapseTwo' class='%s' aria-labelledby='headingTwo' data-bs-parent='#accordionExample'>"
             "<div class='accordion-body'>"
-            "<p>Each Status Station has 4 LED's connected. Assign an agent to each light. As the agent's status changes from available to busy the light will follow the agent.</p>"
+            "<p>Each Status Station has %d LED's connected. "
+                "Assign an agent to each light. As the agent's status changes from available to busy the light will follow the agent.</p>"
               "<form method='POST' action='/save_agents'>"
-                "<div class='field'>"
-                  "<label>LED 1</label><select style='width:50%%' class='led-agent' type='text' name='led0'>%s</select> <br/>"
-                  "<input type='hidden' name='agent0' class='agent-name' value='%s'/>"
-                "</div><div class='field'>"
-                  "<label>LED 2</label><select style='width:50%%' class='led-agent' type='text' name='led1'>%s</option></select> <br/>"
-                  "<input type='hidden' name='agent1' class='agent-name' value='%s'/>"
-                "</div><div class='field'>"
-                  "<label>LED 3</label><select style='width:50%%' class='led-agent' type='text' name='led2'>%s</option></select> <br/>"
-                  "<input type='hidden' name='agent2' class='agent-name' value='%s'/>"
-                "</div><div class='field'>"
-                  "<label>LED 4</label><select style='width:50%%' class='led-agent' type='text' name='led3'>%s</option></select> <br/>"
-                  "<input type='hidden' name='agent3' class='agent-name' value='%s'/>"
-                "</div><div class='field'>"
+              "%s"
                 "<input type='submit' value='Save'/>"
               "</form>"
             "</div>"
@@ -513,16 +580,25 @@ void handle_Main() {
       "</div>"
       "<script>"
 "      $('.led-agent').select2({ "
+"  minimumInputLength: 4,"
 "  ajax: { "
 "    url: '/agents', "
 "    dataType: 'json' "
 "  } "
 "}).on('change', function(e) { "
-" const l = $(this).closest('.field').find('.select2-selection__rendered').text(); console.log('capture label:', l); $(this).closest('.field').find('input[type=hidden]').val(l); "
+" const l = $(this).closest('.field').find('.select2-selection__rendered').text(); console.log('capture label:', l); "
+" $(this).closest('.field').find('input[type=hidden]').val(l); "
 "});"
       "</script>"
-    "</body></html>", conf.ctm_configured ? "accordion-button collapsed" : "accordion-collapse collapse show", html_error, conf.ssid, conf.pass, conf.ctm_configured ? "accordion-collapse collapse show" : "accordion-button collapsed",
-                      led_opts[0],conf.agentNames[0], led_opts[1],conf.agentNames[1], led_opts[2],conf.agentNames[2],led_opts[3],conf.agentNames[3]);
+    "</body></html>";
+
+  snprintf(html_buffer, sizeof(html_buffer), fmt_string,
+(conf.ctm_configured ? "accordion-button collapsed" : "accordion-collapse collapse show"),
+                      html_error, conf.ssid, conf.pass,
+                      (conf.ctm_configured ? "accordion-collapse collapse show" : "accordion-button collapsed"),
+                      LED_COUNT, led_input_buffer);
+
+  free(led_input_buffer);
 
   Serial.println("  200 OK");
   server.send(200, "text/html", html_buffer);
@@ -585,7 +661,6 @@ void handle_Link() {
   linkError   = false;
   WiFiClientSecure client;
   HTTPClient http;
-  Serial.printf("use root_ca: %s\n", root_ca);
   client.setCACert(root_ca);
 
   // secure requests read: https://techtutorialsx.com/2017/11/18/esp32-arduino-https-get-request/
@@ -743,7 +818,7 @@ void handle_Linked() {
 }
 
 void handle_SaveAgents() {
-  for (int i = 0; i < PIXEL_COUNT; ++i) {
+  for (int i = 0; i < LED_COUNT; ++i) {
     String ledkey = String("led") + i;
     if (server.hasArg(ledkey)) {
       conf.leds[i] = server.arg(ledkey).toInt();
@@ -787,6 +862,21 @@ void handle_AgentLookup() {
 
 void handleNotFound() {
   server.send(404, "text/plain", "404: Not found"); // Send HTTP status 404 (Not Found) when there's no handler for the URI in the request
+}
+void updateAgentStatusLed(int ledIndex, const String status) {
+  if (status == "inbound" || status == "outbound" || status == "video_member") {
+    setRed(ledIndex);
+    pixels->show();
+  } else if (status == "wrapup") {
+    setPurple(ledIndex);
+    pixels->show();
+  } else if (status == "offline") {
+    setOff(ledIndex);
+    pixels->show();
+  } else if (status == "online") {
+    setGreen(ledIndex);
+    pixels->show();
+  }
 }
 /*
  *
@@ -1028,4 +1118,12 @@ void refreshAccessToken() {
     tp.DotStar_Clear();
     tp.DotStar_SetPixelColor(0, 255, 0);
   }
+}
+void refreshAllAgentStatus() {
+  // initially fetch starting data for each configured led and possibly update agent name data
+  for (int i = 0; i < LED_COUNT; ++i) {
+    Serial.printf("fetching led status for %d\n", i);
+    fetchLedAgentStatus(i);
+  }
+  Serial.println("finished fetching statuses waiting 1 secn");
 }
