@@ -19,12 +19,26 @@
 
 #define RESET_BUTTON 27
 #define STATUS_LIGHT_OUT 25
+#define DO_EXPAND(VAL)  VAL ## 1
+#define EXPAND(VAL)     DO_EXPAND(VAL)
 
 #ifdef CTM_PRODUCTION
+#if !defined(APP_HOST) || (EXPAND(APP_HOST) == 1)
+#undef APP_HOST
 #define APP_HOST "app.calltrackingmetrics.com"
+#endif
+#if !defined(API_HOST) || (EXPAND(API_HOST) == 1)
+#undef API_HOST
 #define API_HOST "api.calltrackingmetrics.com"
+#endif
+#if !defined(SOC_HOST) || (EXPAND(SOC_HOST) == 1)
+#undef SOC_HOST
 #define SOC_HOST "app.calltrackingmetrics.com"
+#endif
+#if !defined(CLIENTID) || (EXPAND(CLIENTID) == 1)
+#undef CLIENTID
 #define CLIENTID "udaRmKY2W_85tFPM6f92R9aG8i-VwPjfQT1Q8RI8qIg"
+#endif
 
 // amazon root ca for api.calltrackingmetrics.com secure connections
 const char *root_ca="-----BEGIN CERTIFICATE-----\n"
@@ -80,11 +94,22 @@ const char *root_ca="-----BEGIN CERTIFICATE-----\n"
 "mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d\n"
 "emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=\n"
 "-----END CERTIFICATE-----";
-
-#define APP_HOST "taf2.ngrok.io"
-#define API_HOST "taf2.ngrok.io"
-#define SOC_HOST "taf2.ngrok.io"
-#define CLIENTID "aJOX4QK_QzADcxVG_ZVY2tCB1KgqffXpKuJUEQbcr48"
+#if !defined(APP_HOST) || (EXPAND(APP_HOST) == 1)
+#undef APP_HOST
+#error "export API_HOST=\"...ngrok.io\""
+#endif
+#if !defined(API_HOST) || (EXPAND(API_HOST) == 1)
+#undef API_HOST
+#error "export API_HOST=\"...ngrok.io\""
+#endif
+#if !defined(SOC_HOST) || (EXPAND(SOC_HOST) == 1)
+#undef SOC_HOST
+#error "export API_HOST=\"...ngrok.io\""
+#endif
+#if !defined(CLIENTID) || (EXPAND(CLIENTID) == 1)
+#undef CLIENTID
+#error "export CLIENTID=\"your oauth2 client app id you can get this in the webapplication /oauth_apps/new"
+#endif
 
 #endif
 
@@ -191,12 +216,13 @@ void fetchLedAgentStatus(int index) {
   http.addHeader("Authorization", String("Bearer ") + conf.access_token);
   int r = http.GET();
   String body = http.getString();
+  Serial.println(body);
   http.end();
   if (r < 0) {
     Serial.println("error issuing device request");
     return;
   }
-  StaticJsonDocument<1024> doc;
+  StaticJsonDocument<2048> doc;
   DeserializationError error = deserializeJson(doc, body);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
@@ -271,6 +297,9 @@ void setup() {
     IPAddress IP = WiFi.softAPIP();
     Serial.print("AP IP address: ");
     Serial.println(IP);
+    conf.reset();
+    conf.ctm_user_pending = false;
+    conf.save();
   }
 
   server.on("/", HTTP_GET, handle_Main);
@@ -295,6 +324,8 @@ void setup() {
 
   if (conf.ctm_user_pending) {
     Serial.println("pending user configuration to link device");
+    conf.ctm_configured = false;
+    conf.save();
     linkTimerPending = true;
   } else if (conf.ctm_configured) {
     startWebsocket();
@@ -769,12 +800,23 @@ void checkTokenStatus() {
       Serial.println("link success!");
       linkError = false;
       conf.account_id = (int)obj["account_id"];
-      memcpy(conf.access_token, (const char *)obj["access_token"], strlen((const char *)obj["access_token"]));
-      memcpy(conf.refresh_token, (const char *)obj["refresh_token"], strlen((const char *)obj["refresh_token"]));
+      int atlen = strlen((const char *)obj["access_token"]);
+      if (atlen > 128) {
+        Serial.println("error access token overflow!");
+      }
+      memset(conf.access_token, '\0', 128);
+      memset(conf.refresh_token, '\0', 128);
+      memcpy(conf.access_token, (const char *)obj["access_token"], atlen < 128 ? atlen : 128);
+      int rtlen = strlen((const char *)obj["refresh_token"]);
+      if (rtlen > 128) {
+        Serial.println("error refresh token overflow!");
+      }
+      memcpy(conf.refresh_token, (const char *)obj["refresh_token"], rtlen < 128 ? rtlen : 128);
       conf.ctm_user_pending = false;
       conf.ctm_configured = true;
       conf.user_id = (int)obj["user_id"];
       conf.expires_in = (int)obj["expires_in"];
+      Serial.printf("access_token: %s\n", conf.access_token);
       conf.save();
       Serial.println("Access token saved - doing one more reboot");
       tp.DotStar_Clear();
@@ -1117,6 +1159,20 @@ void refreshAccessToken() {
     conf.save();
     tp.DotStar_Clear();
     tp.DotStar_SetPixelColor(0, 255, 0);
+  } else {
+    Serial.println("something is really messed up reset and turn lights red and wait here....");
+    tp.DotStar_Clear();
+    tp.DotStar_SetPixelColor(255, 0, 0);
+    setRedAll();
+    conf.reset();
+    conf.save();
+    while(1) {
+      delay(1000);
+      setOffAll();
+      Serial.println("something is really messed up reset and turn lights red and wait here....");
+      delay(1000);
+      setRedAll();
+    }
   }
 }
 void refreshAllAgentStatus() {
