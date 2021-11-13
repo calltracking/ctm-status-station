@@ -871,6 +871,7 @@ void handle_SaveAgents() {
     }
   }
   conf.save();
+  refreshAllAgentStatus();
   server.sendHeader("Location","/");
   server.send(303);
 }
