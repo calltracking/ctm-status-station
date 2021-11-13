@@ -133,7 +133,7 @@ typedef struct _Ringer {
   bool high;
   uint64_t lastRing;
 } Ringer;
-#define RINGERS 4
+#define RINGERS LED_COUNT
 Ringer ringers[RINGERS]; // set of led's to blink for ringing
 
 TinyPICO tp = TinyPICO();
@@ -168,6 +168,7 @@ void setGreen(int index) { pixels->setPixelColor(index, pixels->Color(150, 0, 0)
 void setBlue(int index)  { pixels->setPixelColor(index, pixels->Color(0, 0, 150)); }
 void setPurple(int index)  { pixels->setPixelColor(index, pixels->Color(0, 150, 150)); }
 void setOrange(int index)  { pixels->setPixelColor(index, pixels->Color(150, 150, 0)); }
+void setError(int index)  { pixels->setPixelColor(index, pixels->Color(55,200,90)); }
 
 void setOff(int index)  { pixels->setPixelColor(index, pixels->Color(0, 0, 0)); }
 void setOffAll() {
@@ -209,7 +210,7 @@ void fetchLedAgentStatus(int index) {
   WiFiClientSecure client;
   HTTPClient http;
   client.setCACert(root_ca);
-  String url = String("https://"  API_HOST   "/api/v1/accounts/") + conf.account_id + "/users/" + agentId;
+  String url = String("https://"  API_HOST   "/api/v1/accounts/") + conf.account_id + "/agents/" + agentId;
   http.setConnectTimeout(10000);// timeout in ms
   http.setTimeout(10000); // 10 seconds
   http.begin(client, url);
@@ -231,14 +232,23 @@ void fetchLedAgentStatus(int index) {
   }
   JsonObject obj = doc.as<JsonObject>();
   if (strlen(conf.agentNames[index]) == 0) {
-    Serial.printf("updating missing name data for agent: %s  %s\n", (const char*)obj["first_name"], (const char*)obj["last_name"]);
-    snprintf(conf.agentNames[index], 32, "%s %s", (const char*)obj["first_name"], (const char*)obj["last_name"]);
+    Serial.printf("updating missing name data for agent: %s\n", (const char*)obj["name"]);
+    snprintf(conf.agentNames[index], 32, "%s", (const char*)obj["name"]);
     conf.save();
   }
 
-  Serial.printf("got status: %s for led %d\n", (const char*)obj["status"], index);
-
-  updateAgentStatusLed(index, obj["status"]);
+  if (obj.containsKey("access") && obj["access"] == "denied") { // {"access":"denied"}
+    Serial.printf("access denied\n");
+    //updateAgentStatusLed(index, "offline");
+    setError(index);
+    pixels->show();
+  } else if (obj.containsKey("status") && obj["status"]) {
+    Serial.printf("got status: %s for led %d\n", (const char*)obj["status"], index);
+    updateAgentStatusLed(index, obj["status"]);
+  } else {
+    Serial.printf("no status mark offline\n");
+    updateAgentStatusLed(index, "offline");
+  }
 }
 
 void setup() {
@@ -537,11 +547,11 @@ void handle_Main() {
     char *offsetpointer = led_input_buffer+offset;
     snprintf(led_input_buffer+offset, (single_led_size + strlen(led_opts[i])), markup_for_led_selector,
              (i+1), i, led_opts[i], i, conf.agentNames[i]);
-    Serial.printf("\tinput: %s is %d long\n", offsetpointer, strlen(offsetpointer));
+//    Serial.printf("\tinput: %s is %d long\n", offsetpointer, strlen(offsetpointer));
     offset += strlen(offsetpointer);
   }
-  Serial.println("\n\n\n####################\n");
-  Serial.println(led_input_buffer);
+//  Serial.println("\n\n\n####################\n");
+//  Serial.println(led_input_buffer);
 
   const char *fmt_string = "<!doctype html><html>"
     "<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
@@ -612,6 +622,7 @@ void handle_Main() {
       "<script>"
 "      $('.led-agent').select2({ "
 "  minimumInputLength: 4,"
+"  allowClear: true,"
 "  ajax: { "
 "    url: '/agents', "
 "    dataType: 'json' "
@@ -913,7 +924,7 @@ void updateAgentStatusLed(int ledIndex, const String status) {
   } else if (status == "wrapup") {
     setPurple(ledIndex);
     pixels->show();
-  } else if (status == "offline") {
+  } else if (status == "offline" || status == "" || status == "null") {
     setOff(ledIndex);
     pixels->show();
   } else if (status == "online") {
@@ -978,6 +989,9 @@ void socketMessage(websockets::WebsocketsMessage message) {
         return;
       }
       JsonObject fields = doc.as<JsonObject>();
+      /*
+       * : {"action":"status","what":"agent","data":{"id":1,"sid":"USREB077D06AC239BB5","status":"offline","logged_out":1,"queue_total":0}}
+       */
       if (fields.containsKey("action") && fields.containsKey("what") && fields.containsKey("data") && conf.ledsConfigured()) {
         String action = fields["action"];
         String what   = fields["what"];
@@ -990,8 +1004,8 @@ void socketMessage(websockets::WebsocketsMessage message) {
           int agent_id = fields["data"]["id"];
           String status = (what == "agent" && fields["data"].containsKey("status")) ? fields["data"]["status"].as<String>() : "";
           int ledIndex = conf.getAgentLed(agent_id);
-          //Serial.printf("status for %d, with led: %d\n", agent_id, ledIndex);
-          if (ledIndex > -1 && ledIndex < 4) {
+          Serial.printf("status[%s] for %d, with led: %d\n", status.c_str(), agent_id, ledIndex);
+          if (ledIndex > -1 && ledIndex < LED_COUNT) {
             // {"action":"status","what":"agent","data":{"id":19223,"sid":"USR043E46722529BCB5F2411A7E1C8C06E1","status":"ringing","from_status":"online","logged_out":0,"queue_total":4}}
             // {"time":1636234298.814153,"action":"status","what":"online","data":{"id":19223,"time":1636234298.814153}}
             if (what == "agent" && status == "ringing") {
@@ -1008,7 +1022,7 @@ void socketMessage(websockets::WebsocketsMessage message) {
                 Serial.printf("%d, with led: %d set blue\n", agent_id, ledIndex);
                 setPurple(ledIndex);
                 pixels->show();
-              } else if (what == "offline" || status == "offline") {
+              } else if ((what == "agent" && status == "offline") || (what == "offline" || status == "offline")) {
                 Serial.printf("%d, with led: %d set blue\n", agent_id, ledIndex);
                 setOff(ledIndex);
                 pixels->show();
