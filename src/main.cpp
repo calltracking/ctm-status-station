@@ -117,7 +117,7 @@ const char *root_ca="-----BEGIN CERTIFICATE-----\n"
 
 const char *default_ssid = "ctmlight";
 const char *default_pass = "ctmstatus";
-static char html_buffer[8192];
+static char html_buffer[9892]; // we use about 5486 without custom statues
 static char html_error[64];
 bool socketClosed = false;
 bool linkPending = false;
@@ -153,6 +153,7 @@ void handle_Unlink();
 void handle_Linked();
 void handle_AgentLookup();
 void handle_SaveAgents();
+void handle_SaveColors();
 void handleNotFound();
 void checkTokenStatus();
 void socketEvent(websockets::WebsocketsEvent event, String data);
@@ -163,11 +164,11 @@ void refreshCapToken(int attempts=0);
 void startWebsocket();
 void dnsPreload(const char *name);
 
-void setRed(int index)   { pixels->setPixelColor(index, pixels->Color(0, 150, 0)); }
-void setGreen(int index) { pixels->setPixelColor(index, pixels->Color(150, 0, 0)); }
-void setBlue(int index)  { pixels->setPixelColor(index, pixels->Color(0, 0, 150)); }
-void setPurple(int index)  { pixels->setPixelColor(index, pixels->Color(0, 150, 150)); }
-void setOrange(int index)  { pixels->setPixelColor(index, pixels->Color(150, 150, 0)); }
+void setRed(int index)   { pixels->setPixelColor(index, pixels->Color(0, 250, 0)); }
+void setGreen(int index) { pixels->setPixelColor(index, pixels->Color(250, 0, 0)); }
+void setBlue(int index)  { pixels->setPixelColor(index, pixels->Color(0, 0, 250)); }
+void setPurple(int index)  { pixels->setPixelColor(index, pixels->Color(0, 250, 250)); }
+void setOrange(int index)  { pixels->setPixelColor(index, pixels->Color(250, 250, 0)); }
 void setError(int index)  { pixels->setPixelColor(index, pixels->Color(55,200,90)); }
 
 void setOff(int index)  { pixels->setPixelColor(index, pixels->Color(0, 0, 0)); }
@@ -201,6 +202,7 @@ void setGreenAll() {
 }
 
 void refreshAllAgentStatus();
+void fetchCustomStatus(); 
 
 // fetch current status information for the given agent for the led at index
 void fetchLedAgentStatus(int index) {
@@ -231,8 +233,8 @@ void fetchLedAgentStatus(int index) {
     return;
   }
   JsonObject obj = doc.as<JsonObject>();
-  if (strlen(conf.agentNames[index]) == 0) {
-    Serial.printf("updating missing name data for agent: %s\n", (const char*)obj["name"]);
+  if (obj.containsKey("name")) {
+    Serial.printf("update name for agent: %s\n", (const char*)obj["name"]);
     snprintf(conf.agentNames[index], 32, "%s", (const char*)obj["name"]);
     conf.save();
   }
@@ -321,6 +323,7 @@ void setup() {
   server.on("/linked", HTTP_POST, handle_Linked);
   server.on("/agents", HTTP_GET, handle_AgentLookup);
   server.on("/save_agents", HTTP_POST, handle_SaveAgents);
+  server.on("/save_colors", HTTP_POST, handle_SaveColors);
   server.onNotFound(handleNotFound);
 
   server.begin();
@@ -338,6 +341,8 @@ void setup() {
     conf.save();
     linkTimerPending = true;
   } else if (conf.ctm_configured) {
+    // fetch available statues
+    fetchCustomStatus();
     startWebsocket();
   } else {
     conf.resetAgentLeds();
@@ -533,12 +538,11 @@ void handle_Main() {
     led_opt_size += strlen(led_opts[i]) + 1;
   }
 
-  const char *markup_for_led_selector =  "<div class='field'>"
-                  "<label>LED %d</label><select style='width:300px' class='led-agent' type='text' name='led%d'>%s</select> <br/>"
-                  "<input type='hidden' name='agent%d' class='agent-name' value='%s'/>"
-                "</div>";
+  const char *markup_for_led_selector =  "<p>"
+                  "<label>LED %d</label><select style='width:300px' class='led-agent' type='text' name='led%d'>%s</select>"
+                "</p>";
 
-  int single_led_size = (strlen(markup_for_led_selector) + 32); // plus 32 for agent name hidden field
+  int single_led_size = (strlen(markup_for_led_selector) + 32); // plus 32 for agent name 
   int markup_led_size = (LED_COUNT * single_led_size) + led_opt_size;
   char *led_input_buffer = (char*)malloc(markup_led_size);
   int offset = 0;
@@ -546,12 +550,28 @@ void handle_Main() {
   for (int i = 0; i < LED_COUNT; ++i) {// <option  selected='selected' value='%d'>%s</option>
     char *offsetpointer = led_input_buffer+offset;
     snprintf(led_input_buffer+offset, (single_led_size + strlen(led_opts[i])), markup_for_led_selector,
-             (i+1), i, led_opts[i], i, conf.agentNames[i]);
-//    Serial.printf("\tinput: %s is %d long\n", offsetpointer, strlen(offsetpointer));
+             (i+1), i, led_opts[i]);
     offset += strlen(offsetpointer);
   }
-//  Serial.println("\n\n\n####################\n");
-//  Serial.println(led_input_buffer);
+  const char *markup_for_status_selector =  "<p>"
+                  "<label>%s</label><input style='width:300px' class='status' type='color' name='%s'>"
+                  "<input type='hidden' class='r' name='%d[red]' value=%d>"
+                  "<input type='hidden' class='g' name='%d[green]' value=%d>"
+                  "<input type='hidden' class='b' name='%d[blue]' value=%d>"
+                "</p>";
+  int single_status_size = (strlen(markup_for_status_selector) + 96); // 96 for status name 2x and color value
+  int markup_status_size = (MAX_CUSTOM_STATUS * single_status_size);
+  char *status_input_buffer = (char*)malloc(markup_status_size);
+  offset = 0;
+  for (int i = 0; i < MAX_CUSTOM_STATUS; ++i) {
+    char *offsetpointer = status_input_buffer+offset;
+    if (conf.custom_status_index[i] && strlen(conf.custom_status_index[i]) > 0) { // avoid writing if there are no custom statues
+      snprintf(status_input_buffer+offset, single_status_size, markup_for_status_selector,
+               conf.custom_status_index[i], conf.custom_status_index[i],
+               i, conf.custom_status_color[i][0], i, conf.custom_status_color[i][1], i, conf.custom_status_color[i][2]);
+      offset += strlen(offsetpointer);
+    }
+  }
 
   const char *fmt_string = "<!doctype html><html>"
     "<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
@@ -584,11 +604,11 @@ void handle_Main() {
       "<div class='accordion' id='settings'>"
         "<div class='accordion-item'>"
           "<h2 class='accordion-header' id='headingOne'>"
-          "<button class='accordion-button' type='button' data-bs-toggle='collapse' data-bs-target='#collapseOne' aria-expanded='false' "
+          "<button class='accordion-button collapsed' type='button' data-bs-toggle='collapse' data-bs-target='#collapseOne' aria-expanded='false' "
           " aria-controls='collapseOne'>"
             "Wifi Settings"
           "</button></h2>"
-          "<div id='collapseOne' class='%s' aria-labelledby='headingOne' data-bs-parent='#accordionExample'>"
+          "<div id='collapseOne' class='%s' aria-labelledby='headingOne' data-bs-parent='#settings'>"
             "<div class='accordion-body'>"
               "<form method='POST' action='/conf'>"
                 "<p>%s</p>"
@@ -603,16 +623,32 @@ void handle_Main() {
         "</div>"
         "<div class='accordion-item'>"
           "<h2 class='accordion-header' id='headingTwo'>"
-          "<button class='accordion-button' type='button' data-bs-toggle='collapse' data-bs-target='#collapseTwo' "
+          "<button class='accordion-button collapsed' type='button' data-bs-toggle='collapse' data-bs-target='#collapseTwo' "
           " aria-expanded='false' aria-controls='collapseTwo'>"
             "Light Settings"
           "</button></h2>"
-          "<div id='collapseTwo' class='%s' aria-labelledby='headingTwo' data-bs-parent='#accordionExample'>"
+          "<div id='collapseTwo' class='%s' aria-labelledby='headingTwo' data-bs-parent='#settings'>"
             "<div class='accordion-body'>"
             "<p>Each Status Station has %d LED's connected. "
-                "Assign an agent to each light. As the agent's status changes from available to busy the light will follow the agent.</p>"
+                "Assign an agent to each light.</p>"
               "<form method='POST' action='/save_agents'>"
               "%s"
+                "<input type='submit' value='Save'/>"
+              "</form>"
+            "</div>"
+          "</div>"
+        "</div>"
+        "<div class='accordion-item'>\n"
+          "<h2 class='accordion-header' id='heading3'>"
+          "<button class='accordion-button collapsed' type='button' data-bs-toggle='collapse' data-bs-target='#collapse3' "
+          " aria-expanded='false' aria-controls='collapse3'>"
+            "Status Settings"
+          "</button></h2>"
+          "<div id='collapse3' class='accordion-button collapsed collapse' aria-labelledby='heading3' data-bs-parent='#settings'>"
+            "<div class='accordion-body'>\n"
+            "<p>Assign color to each status, available is green, on a call is red, wrapup is purple.</p>"
+              "<form method='POST' action='/save_colors'>"
+                "%s"
                 "<input type='submit' value='Save'/>"
               "</form>"
             "</div>"
@@ -621,26 +657,29 @@ void handle_Main() {
       "</div>"
       "<script>"
 "      $('.led-agent').select2({ "
-"  minimumInputLength: 4,"
-"  allowClear: true,"
-"  ajax: { "
-"    url: '/agents', "
-"    dataType: 'json' "
-"  } "
-"}).on('change', function(e) { "
-" const l = $(this).closest('.field').find('.select2-selection__rendered').text(); console.log('capture label:', l); "
-" $(this).closest('.field').find('input[type=hidden]').val(l); "
-"});"
+"  allowClear: true, minimumInputLength: 4, placeholder: \"Enter agent's name\","
+"  templateResult: (r) => { return r.text + ' ' + r.description; },"
+"  ajax: { url: '/agents', dataType: 'json' } "
+"});\n"
+"function hexToRgb(hex) { const result = /^#?([a-f\\d]{2})([a-f\\d]{2})([a-f\\d]{2})$/i.exec(hex); \n"
+" return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : null; \n"
+"}\n"
+"function componentToHex(c) { const hex = parseInt(c).toString(16); return hex.length == 1 ? '0' + hex : hex; }\n"
+"function rgbToHex(r, g, b) { return '#' + componentToHex(r) + componentToHex(g) + componentToHex(b); }\n"
+"$('input[type=color]').each(function() { const rgb = $(this).closest('p').find('[type=hidden]').map(function() { return this.value; }); $(this).val(rgbToHex(rgb[0], rgb[1], rgb[2])) })\n"
+"$('input[type=color]').change(function() { const v = $(this).val(); const rgb = hexToRgb(v); const a = ['r','g','b']; for (i=0;i<3;++i) { $(this).closest('p').find(`[type=hidden].${a[i]}`).val(rgb[a[i]]); } })\n"
       "</script>"
     "</body></html>";
 
   snprintf(html_buffer, sizeof(html_buffer), fmt_string,
-(conf.ctm_configured ? "accordion-button collapsed" : "accordion-collapse collapse show"),
+(conf.ctm_configured ? "accordion-button collapsed collapse" : "accordion-collapse collapse show"),
                       html_error, conf.ssid, conf.pass,
-                      (conf.ctm_configured ? "accordion-collapse collapse show" : "accordion-button collapsed"),
-                      LED_COUNT, led_input_buffer);
+                      (conf.ctm_configured ? "accordion-collapse collapse show" : "accordion-button collapsed collapse"),
+                      LED_COUNT, led_input_buffer, status_input_buffer);
 
   free(led_input_buffer);
+  free(status_input_buffer);
+  Serial.printf("output size %d\n", strlen(html_buffer));
 
   Serial.println("  200 OK");
   server.send(200, "text/html", html_buffer);
@@ -870,15 +909,46 @@ void handle_Linked() {
   server.send(200, "text/html", html_buffer);
 }
 
+void handle_SaveColors() {
+  // reset
+  for (int i = 0; i < MAX_CUSTOM_STATUS; ++i) {
+    String redKey = i + String("[red]");
+    if (server.hasArg(redKey)) {
+      conf.custom_status_color[i][0] = server.arg(redKey).toInt();
+    } else {
+      conf.custom_status_color[i][0] = 0;
+    }
+
+    String greenKey = i + String("[green]");
+    if (server.hasArg(greenKey)) {
+      conf.custom_status_color[i][1] = server.arg(greenKey).toInt();
+    } else {
+      conf.custom_status_color[i][1] = 0;
+    }
+
+    String blueKey = i + String("[blue]");
+    if (server.hasArg(blueKey)) {
+      conf.custom_status_color[i][2] = server.arg(blueKey).toInt();
+    } else {
+      conf.custom_status_color[i][2] = 0;
+    }
+  }
+  conf.save();
+  refreshAllAgentStatus();
+  server.sendHeader("Location","/");
+  server.send(303);
+}
+
 void handle_SaveAgents() {
+  // erase name data we'll get it again while fetching status
+  for (int i = 0; i < LED_COUNT; ++i) {
+    memset(conf.agentNames[i], 0, 32);
+  }
   for (int i = 0; i < LED_COUNT; ++i) {
     String ledkey = String("led") + i;
+    conf.leds[i] = 0; // zero the led out
     if (server.hasArg(ledkey)) {
       conf.leds[i] = server.arg(ledkey).toInt();
-    }
-    String agentKey = String("agent") + i;
-    if (server.hasArg(agentKey)) {
-      memcpy(conf.agentNames[i], server.arg(agentKey).c_str(), sizeof(conf.agentNames[i]));
     }
   }
   conf.save();
@@ -890,11 +960,11 @@ void handle_SaveAgents() {
 void handle_AgentLookup() {
   String url = String("https://" API_HOST "/api/v1/");
   if (server.hasArg("q")) {
-    url += "lookup.json?descriptions=1&global=0&idstr=0&object_type=agent&search=" + server.arg("q");
+    url += "lookup.json?descriptions=1&global=0&idstr=0&object_type=user&search=" + server.arg("q");
   } else if (server.hasArg("term")) {
-    url += "lookupids.json?descriptions=1&global=0&idstr=0&object_type=agent&ids[]=" + server.arg("term");
+    url += "lookupids.json?descriptions=1&global=0&idstr=0&object_type=user&ids[]=" + server.arg("term");
   } else {
-    url += "lookup.json?descriptions=1&global=0&object_type=agent&idstr=0";
+    url += "lookup.json?descriptions=1&global=0&object_type=user&idstr=0";
   }
   Serial.printf("lookup: %s\n", url.c_str());
   WiFiClientSecure client;
@@ -911,26 +981,52 @@ void handle_AgentLookup() {
   if (r < 0) {
     Serial.println("error issuing device request");
   }
-  server.send(200, "application/json", body);// "{ \"results\": [], \"pagination\": { \"more\": false } }"); // Send HTTP status 404 (Not Found) when there's no handler for the URI in the request
+  StaticJsonDocument<2048> doc;
+  DeserializationError error = deserializeJson(doc, body);
+  if (error) {
+    Serial.print(F("deserializeJson() failed: "));
+    Serial.println(error.f_str());
+    return;
+  }
+
+  JsonObject obj = doc.as<JsonObject>();
+  if (obj.containsKey("authentication")) {
+    refreshAccessToken();
+    server.send(403, "application/json", body);// "{ \"results\": [], \"pagination\": { \"more\": false } }"); // Send HTTP status 404 (Not Found) when there's no handler for the URI in the request
+  } else {
+    server.send(200, "application/json", body);// "{ \"results\": [], \"pagination\": { \"more\": false } }"); // Send HTTP status 404 (Not Found) when there's no handler for the URI in the request
+  }
 }
 
 void handleNotFound() {
   server.send(404, "text/plain", "404: Not found"); // Send HTTP status 404 (Not Found) when there's no handler for the URI in the request
 }
 void updateAgentStatusLed(int ledIndex, const String status) {
+  ringers[ledIndex].on = false;
   if (status == "inbound" || status == "outbound" || status == "video_member") {
     setRed(ledIndex);
-    pixels->show();
   } else if (status == "wrapup") {
     setPurple(ledIndex);
-    pixels->show();
   } else if (status == "offline" || status == "" || status == "null") {
     setOff(ledIndex);
-    pixels->show();
   } else if (status == "online") {
     setGreen(ledIndex);
-    pixels->show();
+  } else if (status == "ringing") {
+    Serial.printf("toggle ringing for agent at %d\n", ledIndex);
+    ringers[ledIndex].on = true;
+    ringers[ledIndex].lastRing = millis();
+  } else {
+    for (int i = 0; i < MAX_CUSTOM_STATUS; ++i) {
+      if (status == conf.custom_status_index[i]) {
+        pixels->setPixelColor(ledIndex, pixels->Color(conf.custom_status_color[i][1], // green
+                                                      conf.custom_status_color[i][0], // red
+                                                      conf.custom_status_color[i][2])); // blue
+        break;
+      }
+    }
+
   }
+  pixels->show();
 }
 /*
  *
@@ -1009,28 +1105,24 @@ void socketMessage(websockets::WebsocketsMessage message) {
             // {"action":"status","what":"agent","data":{"id":19223,"sid":"USR043E46722529BCB5F2411A7E1C8C06E1","status":"ringing","from_status":"online","logged_out":0,"queue_total":4}}
             // {"time":1636234298.814153,"action":"status","what":"online","data":{"id":19223,"time":1636234298.814153}}
             if (what == "agent" && status == "ringing") {
-              Serial.printf("toggle ringing for agent at %d\n", ledIndex);
-              ringers[ledIndex].on = true;
-              ringers[ledIndex].lastRing = millis();
+              updateAgentStatusLed(ledIndex, status);
             } else {
               ringers[ledIndex].on = false;
-              if (what == "agent" && (status == "inbound" || status == "outbound" || status == "video_member")) {
-                Serial.printf("%d, with led: %d set red\n", agent_id, ledIndex);
-                setRed(ledIndex);
-                pixels->show();
-              } else if (what == "agent" && status == "wrapup") {
-                Serial.printf("%d, with led: %d set blue\n", agent_id, ledIndex);
-                setPurple(ledIndex);
-                pixels->show();
-              } else if ((what == "agent" && status == "offline") || (what == "offline" || status == "offline")) {
-                Serial.printf("%d, with led: %d set blue\n", agent_id, ledIndex);
-                setOff(ledIndex);
-                pixels->show();
-              } else if (what == "agent" || (action == "status" && what == "online")) {
+              // pixels->setPixelColor(index, pixels->Color(0, 150, 0));
+              // "action\":\"agent\",\"what\":\"inbound\"
+/*
+ * message: '["message","{\"time\":1636903613.7469814,\"action\":\"status\",\"what\":\"inbound\",\"data\":{\"id\":1,\"time\":1636903613.7469814}}"]'
+status[] for 1, with led: 0
+*/
+              if ((action == "agent" || action == "status") && (what == "inbound" || what == "outbound" || what == "chat")) {
+                status = what;
+              } else if (action == "status" && what == "online") {
+                status = "online";
                 Serial.printf("%d, with led: %d set green\n", agent_id, ledIndex);
                 setGreen(ledIndex);
                 pixels->show();
               }
+              updateAgentStatusLed(ledIndex, status);
             }
           }
         }
@@ -1197,4 +1289,42 @@ void refreshAllAgentStatus() {
     fetchLedAgentStatus(i);
   }
   Serial.println("finished fetching statuses waiting 1 secn");
+}
+
+void fetchCustomStatus() {
+  Serial.printf("fetching available statues for account: %d", conf.account_id);
+  WiFiClientSecure client;
+  HTTPClient http;
+  client.setCACert(root_ca);
+    // fetch /api/v1/accounts/{account_id}/available_statuses?normalized=1
+  String url = String("https://"  API_HOST   "/api/v1/accounts/") + conf.account_id + "/available_statuses?normalized=1";
+  http.setConnectTimeout(10000);// timeout in ms
+  http.setTimeout(10000); // 10 seconds
+  http.begin(client, url);
+  http.addHeader("Authorization", String("Bearer ") + conf.access_token);
+  int r = http.GET();
+  String body = http.getString();
+  Serial.println(body);
+  http.end();
+  if (r < 0) {
+    Serial.println("error issuing device request");
+    return;
+  }
+  StaticJsonDocument<1024> doc;
+  DeserializationError error = deserializeJson(doc, body);
+  if (error) {
+    Serial.print(F("deserializeJson() failed: "));
+    Serial.println(error.f_str());
+    return;
+  }
+  JsonObject obj = doc.as<JsonObject>();
+  if (obj.containsKey("statuses")) {
+    JsonArray statuses = obj["statuses"].as<JsonArray>();
+    int i = 0;
+    for (JsonObject status : statuses) {
+      Serial.printf("status: %s, normalized to: %s\n", (const char*)status["name"], (const char*)status["id"]);
+      snprintf(conf.custom_status_index[i++], 32, "%s", (const char*)status["id"]);
+    }
+    conf.save();
+  }
 }

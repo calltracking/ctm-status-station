@@ -2,6 +2,7 @@
 #define __SETTINGS___H_
 
 #define LED_COUNT 9
+#define MAX_CUSTOM_STATUS 8
 
 #include <EEPROM.h>
 
@@ -39,7 +40,12 @@ struct Settings {
   // map agents to led's
   int leds[LED_COUNT];
   char agentNames[LED_COUNT][32];
-
+  // TODO:
+  // fetch /api/v1/accounts/{account_id}/available_statuses?normalized=1
+  // this way we can present a customized table to the admin to map light colors to the custom statues
+  // we know there are currently 8 custom statues allowed by ctm so we'll have a table of 8 char* mapping
+  char custom_status_index[MAX_CUSTOM_STATUS][32]; // we keep a reference to the custom status in this table it's index in the status_color table lets us know the 3 integer rgb values for that given status
+  short custom_status_color[MAX_CUSTOM_STATUS][3]; // r,g,b as 255 integers
 
 protected:
   uint32_t crc32();

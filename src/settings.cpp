@@ -31,7 +31,17 @@ void Settings::reset() {
   memset(this->refresh_token, 0, 64);
   memset(this->device_code, 0, 64);
   memset(this->leds, 0, LED_COUNT);
-  memset(this->agentNames, 0, LED_COUNT);
+  for (int i = 0; i < LED_COUNT; ++i) {
+    memset(this->agentNames[i], 0, 32);
+  }
+  for (int i = 0; i < MAX_CUSTOM_STATUS; ++i) {
+    memset(this->custom_status_index[i], 0, 32);
+    for (int j = 0; j < 3; ++j) {
+      this->custom_status_color[i][j] = 0;
+    }
+  }
+
+
   this->expires_in = 0;
   this->ctm_configured = false;
   this->wifi_configured = false;
