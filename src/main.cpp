@@ -172,6 +172,13 @@ void setOrange(int index)  { pixels->setPixelColor(index, pixels->Color(250, 250
 void setError(int index)  { pixels->setPixelColor(index, pixels->Color(55,200,90)); }
 
 void setOff(int index)  { pixels->setPixelColor(index, pixels->Color(0, 0, 0)); }
+void setErrorAll() {
+  pixels->clear(); 
+  for (int i = 0; i < LED_COUNT; ++i) {
+    setError(i);
+  }
+  pixels->show(); 
+}
 void setOffAll() {
   pixels->clear(); 
   for (int i = 0; i < LED_COUNT; ++i) {
@@ -1118,10 +1125,12 @@ status[] for 1, with led: 0
                 status = what;
               } else if (action == "status" && what == "online") {
                 status = "online";
-                Serial.printf("%d, with led: %d set green\n", agent_id, ledIndex);
-                setGreen(ledIndex);
-                pixels->show();
+              } else if (action == "status") {
+                status = what; // custom statuses
               }
+/*
+ *  '["message","{\"time\":1636908806.6114316,\"action\":\"status\",\"what\":\"Lunch_and_Coffee_Break\",\"data\":{\"id\":1,\"time\":1636908806.6114316}}"]'
+ */
               updateAgentStatusLed(ledIndex, status);
             }
           }
@@ -1283,12 +1292,70 @@ void refreshAccessToken() {
   }
 }
 void refreshAllAgentStatus() {
-  // initially fetch starting data for each configured led and possibly update agent name data
+  String idList;
   for (int i = 0; i < LED_COUNT; ++i) {
-    Serial.printf("fetching led status for %d\n", i);
-    fetchLedAgentStatus(i);
+    if (conf.leds[i] > 0) {
+      if (idList.length()) {
+        idList += String(",") + conf.leds[i];
+      } else {
+        idList = conf.leds[i];
+      }
+    }
   }
-  Serial.println("finished fetching statuses waiting 1 secn");
+
+  Serial.printf("fetching status for agents\n");
+  WiFiClientSecure client;
+  HTTPClient http;
+  client.setCACert(root_ca);
+  String url = String("https://"  API_HOST   "/api/v1/accounts/") + conf.account_id + "/agents/group_status?ids=" + idList;
+  http.setConnectTimeout(10000);// timeout in ms
+  http.setTimeout(10000); // 10 seconds
+  http.begin(client, url);
+  http.addHeader("Authorization", String("Bearer ") + conf.access_token);
+  int r = http.GET();
+  String body = http.getString();
+  Serial.println(url);
+  Serial.println(body);
+  http.end();
+  if (r < 0) {
+    Serial.println("error issuing device request");
+    return;
+  }
+  StaticJsonDocument<2048> doc;
+  DeserializationError error = deserializeJson(doc, body);
+  if (error) {
+    Serial.print(F("deserializeJson() failed: "));
+    Serial.println(error.f_str());
+    return;
+  }
+  JsonObject obj = doc.as<JsonObject>();
+  if (obj.containsKey("access") && obj["access"] == "denied") { // {"access":"denied"}
+    Serial.printf("access denied\n");
+    setErrorAll();
+  } else if (obj.containsKey("users")) {
+    JsonArray users = obj["users"].as<JsonArray>();
+    for (JsonObject user : users) {
+      int ledIndex = conf.getAgentLed((int)user["uid"]);
+      if (ledIndex > -1 && ledIndex < LED_COUNT) {
+        Serial.printf("update for led: %d for user id: %d, %s\n", ledIndex, (int)user["uid"], (const char*)user["name"]);
+        if (user.containsKey("name")) {
+          Serial.printf("update name for agent: %s\n", (const char*)user["name"]);
+          snprintf(conf.agentNames[ledIndex], 32, "%s", (const char*)user["name"]);
+        }
+
+        if (user.containsKey("status") && user["status"]) {
+          Serial.printf("got status: %s for led %d\n", (const char*)user["status"], ledIndex);
+          updateAgentStatusLed(ledIndex, user["status"]);
+        } else {
+          Serial.printf("no status mark offline\n");
+          updateAgentStatusLed(ledIndex, "offline");
+        }
+      }
+    }
+    // save any updates to names
+    conf.save();
+  }
+
 }
 
 void fetchCustomStatus() {
