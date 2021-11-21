@@ -125,6 +125,7 @@ bool linkError = false;
 bool linkTimerPending = false; // waiting for token device code
 uint64_t lastLinkTimerCheck = 0;
 uint64_t lastPing = 0;
+uint64_t lastStatusCheck = 0;
 
 String captoken;
 bool hasAuthGranted = false;
@@ -458,6 +459,7 @@ void loop() {
         lastPing = now;
       }
 
+      // handle ringers
       for (int i = 0; i < RINGERS; ++i) {
         if (ringers[i].on) {
           int delta = (now - ringers[i].lastRing);
@@ -477,6 +479,11 @@ void loop() {
             ringers[i].lastRing = now;
           }
         }
+      }
+      deltaSeconds = (now - lastStatusCheck) / 1000;
+        
+      if (deltaSeconds > 60) {
+        refreshAllAgentStatus();
       }
     }
   }
@@ -1292,6 +1299,7 @@ void refreshAccessToken() {
   }
 }
 void refreshAllAgentStatus() {
+  lastStatusCheck = millis();
   String idList;
   for (int i = 0; i < LED_COUNT; ++i) {
     if (conf.leds[i] > 0) {
