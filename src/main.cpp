@@ -1032,9 +1032,14 @@ void updateAgentStatusLed(int ledIndex, const String status) {
   } else {
     for (int i = 0; i < MAX_CUSTOM_STATUS; ++i) {
       if (status == conf.custom_status_index[i]) {
-        pixels->setPixelColor(ledIndex, pixels->Color(conf.custom_status_color[i][1], // green
-                                                      conf.custom_status_color[i][0], // red
-                                                      conf.custom_status_color[i][2])); // blue
+        int g = conf.custom_status_color[i][1], r = conf.custom_status_color[i][0], b = conf.custom_status_color[i][2];
+        // dim the custom statues to 20% brightness
+        r = (r * 20) >> 8;
+        g = (g * 20) >> 8;
+        b = (b * 20) >> 8;
+        pixels->setPixelColor(ledIndex, pixels->Color(g, // green
+                                                      r, // red
+                                                      b)); // blue
         break;
       }
     }
