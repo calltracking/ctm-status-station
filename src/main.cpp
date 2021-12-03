@@ -2,7 +2,7 @@
  * configure and listen for account or team events
  */
 #define CTM_PRODUCTION
-//#define LIGHT_TEST
+#define LIGHT_TEST
 #include <TinyPICO.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -421,6 +421,18 @@ void lightTestCycle() {
       Serial.println("set purple");
       pixels->setPixelColor(i, pixels->Color(0, 150, 150));
     } else if (i == 4) {
+      Serial.println("set orange");
+      pixels->setPixelColor(i, pixels->Color(150, 150, 0));
+    } else if (i == 5) {
+      Serial.println("set orange");
+      pixels->setPixelColor(i, pixels->Color(150, 150, 0));
+    } else if (i == 6) {
+      Serial.println("set orange");
+      pixels->setPixelColor(i, pixels->Color(150, 150, 0));
+    } else if (i == 7) {
+      Serial.println("set orange");
+      pixels->setPixelColor(i, pixels->Color(150, 150, 0));
+    } else if (i == 8) {
       Serial.println("set orange");
       pixels->setPixelColor(i, pixels->Color(150, 150, 0));
     }
