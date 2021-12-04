@@ -2,7 +2,7 @@
  * configure and listen for account or team events
  */
 #define CTM_PRODUCTION
-#define LIGHT_TEST
+//#define LIGHT_TEST
 #include <TinyPICO.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -1354,6 +1354,7 @@ void refreshAllAgentStatus() {
     return;
   }
   JsonObject obj = doc.as<JsonObject>();
+  // can also be {"authentication":"failed token expired"}
   if (obj.containsKey("access") && obj["access"] == "denied") { // {"access":"denied"}
     Serial.printf("access denied\n");
     setErrorAll();
@@ -1379,6 +1380,9 @@ void refreshAllAgentStatus() {
     }
     // save any updates to names
     conf.save();
+  } else if (obj.containsKey("authentication")) {
+    refreshAccessToken();
+    // referesh token on this run and on the next one we'll hopefuly get updated
   }
 
 }
