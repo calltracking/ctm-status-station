@@ -123,9 +123,12 @@ bool socketClosed = false;
 bool linkPending = false;
 bool linkError = false;
 bool linkTimerPending = false; // waiting for token device code
+short resetCounter = 0;
 uint64_t lastLinkTimerCheck = 0;
 uint64_t lastPing = 0;
 uint64_t lastStatusCheck = 0;
+int LocateLED = -1;
+int locateCycles = 0;
 
 String captoken;
 bool hasAuthGranted = false;
@@ -141,7 +144,12 @@ TinyPICO tp = TinyPICO();
 WebServer server(80);
 Settings conf;
 websockets::WebsocketsClient socket;
+IPAddress DeviceIP;
+const unsigned long WIFIReConnectInteval = 30000;
+unsigned long previousWifiMillis = 0;
 
+
+bool IsLocalAP = true;
 Adafruit_NeoPixel *pixels;
 bool hasSocketConnected = false;
 
@@ -155,6 +163,7 @@ void handle_Linked();
 void handle_AgentLookup();
 void handle_SaveAgents();
 void handle_SaveColors();
+void handle_LocateLED();
 void handleNotFound();
 void checkTokenStatus();
 void socketEvent(websockets::WebsocketsEvent event, String data);
@@ -171,6 +180,12 @@ void setBlue(int index)  { pixels->setPixelColor(index, pixels->Color(0, 0, 250)
 void setPurple(int index)  { pixels->setPixelColor(index, pixels->Color(0, 250, 250)); }
 void setOrange(int index)  { pixels->setPixelColor(index, pixels->Color(250, 250, 0)); }
 void setError(int index)  { pixels->setPixelColor(index, pixels->Color(55,200,90)); }
+
+void blinkGreen();
+void blinkOrange();
+void blinkBlue();
+
+void lightTestCycle();
 
 void setOff(int index)  { pixels->setPixelColor(index, pixels->Color(0, 0, 0)); }
 void setErrorAll() {
@@ -262,7 +277,6 @@ void fetchLedAgentStatus(int index) {
 }
 
 void setup() {
-  bool localAP = false;
   Serial.begin(115200);
 
   delay(3000);
@@ -305,21 +319,22 @@ void setup() {
     }
     // this has a dramatic effect on packet RTT
     WiFi.setSleep(WIFI_PS_NONE);
-    IPAddress localIP = WiFi.localIP();
+    DeviceIP = WiFi.localIP();
+    IsLocalAP = false;
     Serial.print("IP address: ");
-    Serial.println(WiFi.localIP());
+    Serial.println(DeviceIP);
   } else {
     Serial.print("Setting AP...");
     Serial.println(default_ssid);
     Serial.println(default_pass);
     WiFi.softAP(default_ssid, default_pass);
-    localAP = true;
     IPAddress IP = WiFi.softAPIP();
     Serial.print("AP IP address: ");
     Serial.println(IP);
     conf.reset();
     conf.ctm_user_pending = false;
     conf.save();
+    IsLocalAP = true;
   }
 
   server.on("/", HTTP_GET, handle_Main);
@@ -332,18 +347,21 @@ void setup() {
   server.on("/agents", HTTP_GET, handle_AgentLookup);
   server.on("/save_agents", HTTP_POST, handle_SaveAgents);
   server.on("/save_colors", HTTP_POST, handle_SaveColors);
+  server.on("/locate", HTTP_POST, handle_LocateLED);
   server.onNotFound(handleNotFound);
 
   server.begin();
   delay(1000);
   Serial.println("setup complete");
-  if (localAP) {
+    
+  if (IsLocalAP) {
     Serial.println("Connect to AP:");
     Serial.println(default_ssid);
     Serial.println(default_pass);
   }
 
   if (conf.ctm_user_pending) {
+    blinkOrange();
     Serial.println("pending user configuration to link device");
     conf.ctm_configured = false;
     conf.save();
@@ -355,6 +373,7 @@ void setup() {
   } else {
     conf.resetAgentLeds();
     conf.save();
+    blinkBlue();
     Serial.println("device is reset");
   }
 }
@@ -442,6 +461,45 @@ void lightTestCycle() {
     delay(500); // Pause before next pass through loop
   }
 }
+void blinkGreen() {
+  pixels->clear();
+  for (int i=0; i< LED_COUNT; ++i) { // For each pixel...
+    pixels->setPixelColor(i, pixels->Color(0, 0, 0));
+  }
+  pixels->show();   // Send the updated pixel colors to the hardware.
+  delay(500); // Pause before next pass through loop
+  for(int i=0; i< LED_COUNT; ++i) { // For each pixel...
+    pixels->setPixelColor(i, pixels->Color(150, 0, 0));
+  }
+  pixels->show();   // Send the updated pixel colors to the hardware.
+  delay(500); // Pause before next pass through loop
+}
+void blinkOrange() {
+  pixels->clear();
+  for (int i=0; i< LED_COUNT; ++i) { // For each pixel...
+    pixels->setPixelColor(i, pixels->Color(0, 0, 0));
+  }
+  pixels->show();   // Send the updated pixel colors to the hardware.
+  delay(500); // Pause before next pass through loop
+  for(int i=0; i< LED_COUNT; ++i) { // For each pixel...
+    pixels->setPixelColor(i, pixels->Color(150, 150, 0));
+  }
+  pixels->show();   // Send the updated pixel colors to the hardware.
+  delay(500); // Pause before next pass through loop
+}
+void blinkBlue() {
+  pixels->clear();
+  for (int i=0; i< LED_COUNT; ++i) { // For each pixel...
+    pixels->setPixelColor(i, pixels->Color(0, 0, 0));
+  }
+  pixels->show();   // Send the updated pixel colors to the hardware.
+  delay(500); // Pause before next pass through loop
+  for (int i=0; i< LED_COUNT; ++i) { // For each pixel...
+    pixels->setPixelColor(i, pixels->Color(0, 0, 150));
+  }
+  pixels->show();   // Send the updated pixel colors to the hardware.
+  delay(500); // Pause before next pass through loop
+}
 
 void loop() {
   uint64_t now = millis();
@@ -502,12 +560,19 @@ void loop() {
 
   server.handleClient();
 
+  // press and hold
   if (digitalRead(RESET_BUTTON) == HIGH) {
     Serial.println("reset pressed");
-    conf.reset();
-    conf.save();
-    delay(2000);
-    ESP.restart();
+    resetCounter++;
+    blinkBlue();
+    delay(1000);
+    if (resetCounter > 10) {
+      setRedAll();
+      conf.reset();
+      conf.save();
+      delay(2000);
+      ESP.restart();
+    }
     return;
   }
 
@@ -515,15 +580,45 @@ void loop() {
     tp.DotStar_CycleColor(25);
     int linkCheckStatusDeltaSeconds = (now - lastLinkTimerCheck) / 1000;
     if (linkTimerPending && linkCheckStatusDeltaSeconds > 5) {
+      blinkGreen();
       lastLinkTimerCheck = now;
       // execution polling status connection check
       checkTokenStatus();
+    } else {
+      blinkOrange();
+    }
+  }
+  if (!conf.ctm_user_pending && !conf.ctm_configured) {
+    Serial.printf("not linked configure at: %s\n", DeviceIP.toString().c_str());
+    blinkBlue();
+  }
+
+  if (!IsLocalAP  && WiFi.status() != WL_CONNECTED && (now - previousWifiMillis) > WIFIReConnectInteval) {
+    // wifi connection lost
+    Serial.println("Reconnecting to WiFi...");
+    setErrorAll();
+    WiFi.disconnect();
+    WiFi.reconnect();
+    previousWifiMillis = now;
+  }
+
+  if (LocateLED > -1) {
+    locateCycles++;
+    if (locateCycles  < 10) {
+      setOrange(LocateLED);
+      pixels->show();
+      delay(1000);
+    } else {
+      locateCycles = 0;
+      LocateLED = -1;
+      refreshAllAgentStatus();
+      Serial.println("locate done resume all");
     }
   }
 }
 
 void handle_Main() {
-  Serial.print("requesting /");
+  Serial.print("GET /");
   if (!conf.wifi_configured) {
     snprintf(html_buffer, sizeof(html_buffer), "<!doctype html><html>"
       "<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
@@ -565,7 +660,7 @@ void handle_Main() {
   }
 
   const char *markup_for_led_selector =  "<p>"
-                  "<label>LED %d</label><select style='width:300px' class='led-agent' type='text' name='led%d'>%s</select>"
+                  "<label class='locate'>LED %d</label><select style='width:300px' class='led-agent' type='text' name='led%d'>%s</select>"
                 "</p>";
 
   int single_led_size = (strlen(markup_for_led_selector) + 32); // plus 32 for agent name 
@@ -694,6 +789,7 @@ void handle_Main() {
 "function rgbToHex(r, g, b) { return '#' + componentToHex(r) + componentToHex(g) + componentToHex(b); }\n"
 "$('input[type=color]').each(function() { const rgb = $(this).closest('p').find('[type=hidden]').map(function() { return this.value; }); $(this).val(rgbToHex(rgb[0], rgb[1], rgb[2])) })\n"
 "$('input[type=color]').change(function() { const v = $(this).val(); const rgb = hexToRgb(v); const a = ['r','g','b']; for (i=0;i<3;++i) { $(this).closest('p').find(`[type=hidden].${a[i]}`).val(rgb[a[i]]); } })\n"
+"$('.locate').click( function() { var i = this.innerHTML.replace(/LED /,''); console.log('locate led: ', i); $.post('/locate?led=' + i); });\n"
       "</script>"
     "</body></html>";
 
@@ -963,6 +1059,12 @@ void handle_SaveColors() {
   refreshAllAgentStatus();
   server.sendHeader("Location","/");
   server.send(303);
+}
+
+void handle_LocateLED() {
+  LocateLED = server.arg("ledId").toInt();
+  locateCycles = 0; 
+  server.send(200, "application/json", "{}");
 }
 
 void handle_SaveAgents() {

@@ -1,7 +1,7 @@
 #ifndef __SETTINGS___H_
 #define __SETTINGS___H_
 
-#define LED_COUNT 9
+#define LED_COUNT 8
 #define MAX_CUSTOM_STATUS 8
 
 #include <EEPROM.h>
