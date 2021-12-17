@@ -608,9 +608,11 @@ void loop() {
       setOrange(LocateLED);
       pixels->show();
       delay(1000);
+      Serial.printf("locating %d cycles: %d\n", LocateLED, locateCycles);
     } else {
       locateCycles = 0;
       LocateLED = -1;
+      setOffAll();
       refreshAllAgentStatus();
       Serial.println("locate done resume all");
     }
@@ -1062,7 +1064,7 @@ void handle_SaveColors() {
 }
 
 void handle_LocateLED() {
-  LocateLED = server.arg("ledId").toInt();
+  LocateLED = server.arg("led").toInt() - 1;
   locateCycles = 0; 
   server.send(200, "application/json", "{}");
 }
