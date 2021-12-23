@@ -63,6 +63,7 @@ const char *root_ca="-----BEGIN CERTIFICATE-----\n"
 "-----END CERTIFICATE-----";
 
 #else
+/* *.ngrok.io root cert */
 const char *root_ca="-----BEGIN CERTIFICATE-----\n"
 "MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw\n"
 "TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh\n"
@@ -328,9 +329,7 @@ void setup() {
     Serial.println(default_ssid);
     Serial.println(default_pass);
     WiFi.softAP(default_ssid, default_pass);
-    IPAddress IP = WiFi.softAPIP();
-    Serial.print("AP IP address: ");
-    Serial.println(IP);
+    DeviceIP = WiFi.softAPIP();
     conf.reset();
     conf.ctm_user_pending = false;
     conf.save();
@@ -562,9 +561,8 @@ void loop() {
 
   // press and hold
   if (digitalRead(RESET_BUTTON) == HIGH) {
-    Serial.println("reset pressed");
+    Serial.printf("reset pressed %d of 10", resetCounter);
     resetCounter++;
-    blinkBlue();
     delay(1000);
     if (resetCounter > 10) {
       setRedAll();
@@ -574,6 +572,8 @@ void loop() {
       ESP.restart();
     }
     return;
+  } else {
+    resetCounter = 0;
   }
 
   if (conf.ctm_user_pending) {

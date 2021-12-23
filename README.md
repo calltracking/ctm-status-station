@@ -28,3 +28,14 @@ next be presented with some options to choose a specific team or your whole acco
 
 
 openssl x509 -inform der -in ~/Desktop/ISRG\ Root\ X1.cer -out ~/Desktop/ISRG_ROOT_X1.pem
+
+
+# Development 
+
+When building with CTM_PRODUCTION undefined you must provide a app server address e.g.
+
+Get a clientid from your app https://app.ctmdev.us/oauth_apps/
+
+```
+  CTM_SOC_HOST=<nic.ngrok.io CTM_API_HOST=<nic>.ngrok.io CTM_APP_HOST=<nic>.ngrok.io CTM_CLIENTID=aJOX4QK_QzADcxVG_ZVY2tCB1KgqffXpKuJUEQbcr48 make upload
+```
