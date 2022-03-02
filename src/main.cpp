@@ -175,6 +175,10 @@ void refreshCapToken(int attempts=0);
 void startWebsocket();
 void dnsPreload(const char *name);
 
+char from_hex(char ch);
+char to_hex(char code);
+String url_encode(String str);
+
 void setRed(int index)   { pixels->setPixelColor(index, pixels->Color(0, 250, 0)); }
 void setGreen(int index) { pixels->setPixelColor(index, pixels->Color(250, 0, 0)); }
 void setBlue(int index)  { pixels->setPixelColor(index, pixels->Color(0, 0, 250)); }
@@ -784,7 +788,7 @@ void handle_Main() {
 "      $('.led-agent').select2({ "
 "  allowClear: true, minimumInputLength: 4, placeholder: \"Enter agent's name\","
 "  templateResult: (r) => { return r.text + ' ' + r.description; },"
-"  ajax: { url: '/agents', dataType: 'json' } "
+"  ajax: { delay: 250, url: '/agents', dataType: 'json' } "
 "});\n"
 "function hexToRgb(hex) { const result = /^#?([a-f\\d]{2})([a-f\\d]{2})([a-f\\d]{2})$/i.exec(hex); \n"
 " return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : null; \n"
@@ -1092,7 +1096,7 @@ void handle_SaveAgents() {
 void handle_AgentLookup() {
   String url = String("https://" API_HOST "/api/v1/");
   if (server.hasArg("q")) {
-    url += "lookup.json?descriptions=1&global=0&idstr=0&object_type=user&search=" + server.arg("q");
+    url += "lookup.json?descriptions=1&global=0&idstr=0&object_type=user&search=" + url_encode(server.arg("q"));
   } else if (server.hasArg("term")) {
     url += "lookupids.json?descriptions=1&global=0&idstr=0&object_type=user&ids[]=" + server.arg("term");
   } else {
@@ -1178,7 +1182,7 @@ void updateAgentStatusLed(int ledIndex, const String status) {
 -> 42["message",{"action":"active","what":"call","data":"0"}]
  */
 void socketMessage(websockets::WebsocketsMessage message) {
-  Serial.print("WS(msg): ");
+  //Serial.print("WS(msg): ");
   String data = message.data();
   const char *data_str = data.c_str();
   //Serial.println(data);
@@ -1210,11 +1214,11 @@ void socketMessage(websockets::WebsocketsMessage message) {
     JsonArray msg = doc.as<JsonArray>();
     String action = msg[0];
     //JsonObject fields = msg[1].as<JsonObject>();
-    Serial.println("received:" + action);
+    //Serial.println("received:" + action);
     if (action == "auth.granted") {
       hasAuthGranted = true;
     } else if (action == "message" && hasAuthGranted) {
-      Serial.printf("message: '%s'\n", data_str);
+      //Serial.printf("message: '%s'\n", data_str);
       //Serial.println(msg[1].as<String>());
       DeserializationError error = deserializeJson(doc, msg[1].as<String>());
       if (error) {
@@ -1238,8 +1242,8 @@ void socketMessage(websockets::WebsocketsMessage message) {
           int agent_id = fields["data"]["id"];
           String status = (what == "agent" && fields["data"].containsKey("status")) ? fields["data"]["status"].as<String>() : "";
           int ledIndex = conf.getAgentLed(agent_id);
-          Serial.printf("status[%s] for %d, with led: %d\n", status.c_str(), agent_id, ledIndex);
           if (ledIndex > -1 && ledIndex < LED_COUNT) {
+            Serial.printf("status[%s] for %d, with led: %d\n", status.c_str(), agent_id, ledIndex);
             // {"action":"status","what":"agent","data":{"id":19223,"sid":"USR043E46722529BCB5F2411A7E1C8C06E1","status":"ringing","from_status":"online","logged_out":0,"queue_total":4}}
             // {"time":1636234298.814153,"action":"status","what":"online","data":{"id":19223,"time":1636234298.814153}}
             if (what == "agent" && status == "ringing") {
@@ -1533,4 +1537,43 @@ void fetchCustomStatus() {
     }
     conf.save();
   }
+}
+
+
+// found these very helpful functions from: http://www.geekhideout.com/urlcode.shtml
+
+/* Converts a hex character to its integer value */
+char from_hex(char ch) {
+  return isdigit(ch) ? ch - '0' : tolower(ch) - 'a' + 10;
+}
+
+/* Converts an integer value to its hex character*/
+char to_hex(char code) {
+  static char hex[] = "0123456789abcdef";
+  return hex[code & 15];
+}
+
+/* Returns a url-encoded version of str */
+String url_encode(String str) {
+  
+  char *pstr = (char*)str.c_str();
+  char *buf = (char*)malloc(strlen(pstr) * 3 + 1);
+  char *pbuf = buf;
+  int max = 100;
+
+  while (*pstr && max > 0) {
+    if (isalnum(*pstr) || *pstr == '-' || *pstr == '_' || *pstr == '.' || *pstr == '~') {
+      *pbuf++ = *pstr;
+    } else if (*pstr == ' ') {
+      *pbuf++ = '+';
+    } else {
+      *pbuf++ = '%', *pbuf++ = to_hex(*pstr >> 4), *pbuf++ = to_hex(*pstr & 15);
+    }
+    pstr++;
+    --max;
+  }
+  *pbuf = '\0';
+  String output = String(buf);
+  free(buf);
+  return output;
 }
