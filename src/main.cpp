@@ -395,7 +395,7 @@ void startWebsocket() {
     socket.onEvent(socketEvent);
     socket.onMessage(socketMessage);
 
-    if (!socket.connectSecure(SOC_HOST, 443, "/socket.io/?EIO=3&transport=websocket")) {
+    if (!socket.connectSecure(SOC_HOST, 443, "/socket.io/?EIO=4&transport=websocket")) {
       Serial.println("Error connecting");
       hasSocketConnected = false;
     } else {
@@ -406,6 +406,7 @@ void startWebsocket() {
     setOffAll();
     refreshAllAgentStatus();
 
+    socket.send(String("40"));
   } else {
     Serial.printf("unable to init captoken '%s' is invalid!\n", captoken.c_str());
     hasSocketConnected = false;
@@ -524,6 +525,7 @@ void loop() {
           Serial.print(deltaSeconds);
           Serial.println("seconds past");
         }
+        //socket.send(String("40"));
         socket.ping(); // ping every 25 seconds
         lastPing = now;
       }
@@ -1192,6 +1194,7 @@ void socketMessage(websockets::WebsocketsMessage message) {
     snprintf(html_buffer, sizeof(html_buffer), "42[\"access.account\", %s]", json_string);
     Serial.printf("reply to access.handshake: %s\n", html_buffer);
     socket.send(html_buffer);
+    //socket.send(String("40"));
     socket.ping();
     lastPing = millis();
     // 42["auth.granted",{"account":18614}]
@@ -1286,6 +1289,9 @@ void socketEvent(websockets::WebsocketsEvent event, String data) {
     socket.pong();
   } else if (event == websockets::WebsocketsEvent::GotPong) {
     Serial.println("WS(evt): Got a Pong!");
+    //socket.ping();
+  } else {
+    Serial.println("WS(evt): unknown!");
   }
 }
 void refreshCapToken(int attempts) {
