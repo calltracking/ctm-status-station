@@ -1140,10 +1140,11 @@ void handleNotFound() {
 void updateAgentStatusLed(int ledIndex, const String status) {
   ringers[ledIndex].on = false;
   if (status == "inbound" || status == "outbound" || status == "video_member") {
+    //printf("set red from %s for %d\n", status.c_str(), ledIndex);
     setRed(ledIndex);
   } else if (status == "wrapup") {
     setPurple(ledIndex);
-  } else if (status == "offline" || status == "" || status == "null") {
+  } else if (status == "offline" || status == "" || status == "null" || status == "video_member_end") {
     setOff(ledIndex);
   } else if (status == "online") {
     setGreen(ledIndex);
@@ -1256,6 +1257,10 @@ void socketMessage(websockets::WebsocketsMessage message) {
  * message: '["message","{\"time\":1636903613.7469814,\"action\":\"status\",\"what\":\"inbound\",\"data\":{\"id\":1,\"time\":1636903613.7469814}}"]'
 status[] for 1, with led: 0
 */
+/*
+ * video example
+ * message: '["message","{\"action\":\"status\",\"what\":\"agent\",\"data\":{\"id\":1,\"sid\":\"USREB077D06AC239BB5\",\"status\":\"video_member\",\"logged_out\":1,\"queue_total\":1}}"]'
+ */
               if ((action == "agent" || action == "status") && (what == "inbound" || what == "outbound" || what == "chat")) {
                 status = what;
               } else if (action == "status" && what == "online") {
