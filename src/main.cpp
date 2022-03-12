@@ -1,7 +1,7 @@
 /**
  * configure and listen for account or team events
  */
-#define CTM_PRODUCTION
+//#define CTM_PRODUCTION
 //#define LIGHT_TEST
 #include <TinyPICO.h>
 #include <WiFi.h>
@@ -95,22 +95,14 @@ const char *root_ca="-----BEGIN CERTIFICATE-----\n"
 "mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d\n"
 "emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=\n"
 "-----END CERTIFICATE-----";
-#if !defined(APP_HOST) || (EXPAND(APP_HOST) == 1)
-#undef APP_HOST
-#error "export API_HOST=\"...ngrok.io\""
-#endif
-#if !defined(API_HOST) || (EXPAND(API_HOST) == 1)
-#undef API_HOST
-#error "export API_HOST=\"...ngrok.io\""
-#endif
-#if !defined(SOC_HOST) || (EXPAND(SOC_HOST) == 1)
-#undef SOC_HOST
-#error "export API_HOST=\"...ngrok.io\""
-#endif
-#if !defined(CLIENTID) || (EXPAND(CLIENTID) == 1)
-#undef CLIENTID
-#error "export CLIENTID=\"your oauth2 client app id you can get this in the webapplication /oauth_apps/new"
-#endif
+
+#define STRINGIZE(x) #x
+#define STRINGIZE_VALUE_OF(x) STRINGIZE(x)
+#define API_HOST STRINGIZE_VALUE_OF(CTM_API_HOST)
+#define APP_HOST STRINGIZE_VALUE_OF(CTM_APP_HOST)
+#define SOC_HOST STRINGIZE_VALUE_OF(CTM_SOC_HOST)
+#define CLIENTID STRINGIZE_VALUE_OF(CTM_CLIENTID)
+
 
 #endif
 
