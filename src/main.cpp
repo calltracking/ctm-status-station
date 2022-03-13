@@ -660,7 +660,7 @@ void handle_Main() {
   }
 
   const char *markup_for_led_selector =  "<p>"
-                  "<label class='locate'>LED %d</label><select style='width:300px' class='led-agent' type='text' name='led%d'>%s</select>"
+                  "<a href='#' class='locate'>LED %d</a> <select style='width:300px' class='led-agent' type='text' name='led%d'>%s</select>"
                 "</p>";
 
   int single_led_size = (strlen(markup_for_led_selector) + 32); // plus 32 for agent name 
@@ -675,7 +675,7 @@ void handle_Main() {
     offset += strlen(offsetpointer);
   }
   const char *markup_for_status_selector =  "<p>"
-                  "<label>%s</label><input style='width:300px' class='status' type='color' name='%s'>"
+                  "<label>%s</label> <input style='width:300px' class='status' type='color' name='%s'>"
                   "<input type='hidden' class='r' name='%d[red]' value=%d>"
                   "<input type='hidden' class='g' name='%d[green]' value=%d>"
                   "<input type='hidden' class='b' name='%d[blue]' value=%d>"
@@ -751,7 +751,7 @@ void handle_Main() {
           "<div id='collapseTwo' class='%s' aria-labelledby='headingTwo' data-bs-parent='#settings'>"
             "<div class='accordion-body'>"
             "<p>Each Status Station has %d LED's connected. "
-                "Assign an agent to each light.</p>"
+                "Assign an agent to each light. (click LED to locate)</p>"
               "<form method='POST' action='/save_agents'>"
               "%s"
                 "<input type='submit' value='Save'/>"
@@ -789,7 +789,7 @@ void handle_Main() {
 "function rgbToHex(r, g, b) { return '#' + componentToHex(r) + componentToHex(g) + componentToHex(b); }\n"
 "$('input[type=color]').each(function() { const rgb = $(this).closest('p').find('[type=hidden]').map(function() { return this.value; }); $(this).val(rgbToHex(rgb[0], rgb[1], rgb[2])) })\n"
 "$('input[type=color]').change(function() { const v = $(this).val(); const rgb = hexToRgb(v); const a = ['r','g','b']; for (i=0;i<3;++i) { $(this).closest('p').find(`[type=hidden].${a[i]}`).val(rgb[a[i]]); } })\n"
-"$('.locate').click( function() { var i = this.innerHTML.replace(/LED /,''); console.log('locate led: ', i); $.post('/locate?led=' + i); });\n"
+"$('.locate').click( function(e) { e.preventDefault(); let i = this.innerHTML.replace(/LED /,''); console.log('locate led: ', i); $.post('/locate?led=' + i); });\n"
       "</script>"
     "</body></html>";
 
@@ -908,7 +908,7 @@ void handle_Link() {
     "fetch('/link_status').then(response => response.json()).then( (data) => {"
       "console.log(data);"
       "if (data.status == 'pending') { setTimeout(checkStatus, 5000); } else if (data.status == 'error') { "
-        "document.getElementById('status').innerHTML = 'Error Try Again'; } else { document.getElementById('status').innerHTML = 'Link Successful';"
+        "document.getElementById('status').innerHTML = 'Error Try Again'; } else { window.location='/'; "
       "}"
     "});"
     "} setTimeout(checkStatus, 5000);</script>"
@@ -1483,6 +1483,8 @@ void refreshAllAgentStatus() {
         if (user.containsKey("status") && user["status"]) {
           Serial.printf("got status: %s for led %d\n", (const char*)user["status"], ledIndex);
           updateAgentStatusLed(ledIndex, user["status"]);
+        } else if (user.containsKey("videos") && user["videos"] > 0) {
+          updateAgentStatusLed(ledIndex, "inbound"); // active video treat like on a video 
         } else {
           Serial.printf("no status mark offline\n");
           updateAgentStatusLed(ledIndex, "offline");
