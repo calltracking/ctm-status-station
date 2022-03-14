@@ -1,7 +1,7 @@
 /**
  * configure and listen for account or team events
  */
-//#define CTM_PRODUCTION
+#define CTM_PRODUCTION
 //#define LIGHT_TEST
 #include <TinyPICO.h>
 #include <WiFi.h>
