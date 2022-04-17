@@ -778,7 +778,7 @@ void handle_Main() {
       "</div>"
       "<script>"
 "      $('.led-agent').select2({ "
-"  allowClear: true, minimumInputLength: 4, placeholder: \"Enter agent's name\","
+"  allowClear: true, minimumInputLength: 3, placeholder: \"Enter agent's name\","
 "  templateResult: (r) => { return r.text + ' ' + r.description; },"
 "  ajax: { delay: 250, url: '/agents', dataType: 'json' } "
 "});\n"
@@ -1298,6 +1298,10 @@ void socketEvent(websockets::WebsocketsEvent event, String data) {
 void refreshCapToken(int attempts) {
   captoken  = ""; // set to empty
   if (!conf.ctm_configured || !conf.access_token || !conf.account_id) {
+    if (!conf.account_id) {
+      conf.ctm_configured = false;
+      conf.save();
+    }
     Serial.printf("unable to refresh token missing access token, account id or not configured yet? '%s'\n", conf.refresh_token);
     if (conf.refresh_token && attempts < 2) {
       refreshAccessToken();
