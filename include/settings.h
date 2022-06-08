@@ -47,6 +47,8 @@ struct Settings {
   char custom_status_index[MAX_CUSTOM_STATUS][32]; // we keep a reference to the custom status in this table it's index in the status_color table lets us know the 3 integer rgb values for that given status
   short custom_status_color[MAX_CUSTOM_STATUS][3]; // r,g,b as 255 integers
 
+  bool red_green_flipped;
+
 protected:
   uint32_t crc32();
 

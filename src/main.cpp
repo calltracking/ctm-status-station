@@ -157,6 +157,7 @@ void handle_AgentLookup();
 void handle_SaveAgents();
 void handle_SaveColors();
 void handle_LocateLED();
+void handle_FlipRedGreen();
 void handleNotFound();
 void checkTokenStatus();
 void socketEvent(websockets::WebsocketsEvent event, String data);
@@ -170,12 +171,31 @@ void dnsPreload(const char *name);
 char from_hex(char ch);
 char to_hex(char code);
 String url_encode(String str);
+bool red_green_flipped = false;
 
-void setRed(int index)   { pixels->setPixelColor(index, pixels->Color(0, 250, 0)); }
-void setGreen(int index) { pixels->setPixelColor(index, pixels->Color(250, 0, 0)); }
+void setRed(int index)   {
+  if (red_green_flipped) {
+    pixels->setPixelColor(index, pixels->Color(0, 250, 0));
+  } else {
+    pixels->setPixelColor(index, pixels->Color(250, 0, 0));
+  }
+}
+void setGreen(int index) {
+  if (red_green_flipped) {
+    pixels->setPixelColor(index, pixels->Color(250, 0, 0));
+  } else {
+    pixels->setPixelColor(index, pixels->Color(0, 250, 0));
+  }
+}
 void setBlue(int index)  { pixels->setPixelColor(index, pixels->Color(0, 0, 250)); }
-void setPurple(int index)  { pixels->setPixelColor(index, pixels->Color(0, 250, 250)); }
-void setOrange(int index)  { pixels->setPixelColor(index, pixels->Color(250, 250, 0)); }
+void setPurple(int index)  {
+  if (red_green_flipped) {
+    pixels->setPixelColor(index, pixels->Color(0, 250, 250));
+  } else {
+    pixels->setPixelColor(index, pixels->Color(250, 250, 0));
+  }
+}
+void setOrange(int index)  { pixels->setPixelColor(index, pixels->Color(150, 150, 0)); }
 void setError(int index)  { pixels->setPixelColor(index, pixels->Color(55,200,90)); }
 
 void blinkGreen();
@@ -331,6 +351,8 @@ void setup() {
     conf.save();
     IsLocalAP = true;
   }
+    
+  red_green_flipped = conf.red_green_flipped;
 
   server.on("/", HTTP_GET, handle_Main);
   server.on("/conf", HTTP_POST, handle_Conf);
@@ -343,6 +365,7 @@ void setup() {
   server.on("/save_agents", HTTP_POST, handle_SaveAgents);
   server.on("/save_colors", HTTP_POST, handle_SaveColors);
   server.on("/locate", HTTP_POST, handle_LocateLED);
+  server.on("/flip_red_green", HTTP_POST, handle_FlipRedGreen);
   server.onNotFound(handleNotFound);
 
   server.begin();
@@ -766,6 +789,9 @@ void handle_Main() {
             "Status Settings"
           "</button></h2>"
           "<div id='collapse3' class='accordion-button collapsed collapse' aria-labelledby='heading3' data-bs-parent='#settings'>"
+            "<form method='POST' action='/flip_red_green'>"
+              "<input type='submit' value='Flip Red and Green'/>"
+            "</form>"
             "<div class='accordion-body'>\n"
             "<p>Assign color to each status, available is green, on a call is red, wrapup is purple.</p>"
               "<form method='POST' action='/save_colors'>"
@@ -1057,6 +1083,13 @@ void handle_SaveColors() {
   }
   conf.save();
   refreshAllAgentStatus();
+  server.sendHeader("Location","/");
+  server.send(303);
+}
+
+void handle_FlipRedGreen() {
+  red_green_flipped = conf.red_green_flipped = !red_green_flipped;
+  conf.save();
   server.sendHeader("Location","/");
   server.send(303);
 }

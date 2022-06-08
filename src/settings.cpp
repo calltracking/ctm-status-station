@@ -23,6 +23,7 @@ Settings::Settings() {
 }
 
 void Settings::reset() {
+  this->red_green_flipped = false;
   this->ctm_configured = false;
   this->wifi_configured = false;
   memset(this->ssid, 0, 32);
