@@ -1,24 +1,55 @@
 /**
  * configure and listen for account or team events
  */
+#define HAS_DISPLAY
 #define CTM_PRODUCTION
+
 //#define LIGHT_TEST
-#include <TinyPICO.h>
+#include <SPI.h>
 #include <WiFi.h>
-#include <HTTPClient.h>
 #include <WebServer.h>
-#include <ArduinoJson.h> // see: https://arduinojson.org/v6/api/jsonobject/containskey/
 #include <WiFiClientSecure.h>
+#include <ArduinoHttpClient.h>
+#include <Wire.h>
+#include <ArduinoJson.h> // see: https://arduinojson.org/v6/api/jsonobject/containskey/
 #include <ArduinoWebsockets.h>
 #include <Adafruit_NeoPixel.h>
+
+#include <WiFiClientSecure.h>
+
+#ifdef HAS_DISPLAY
+  #include <Adafruit_GFX.h>
+  #include <Adafruit_ThinkInk.h>
+
+  #ifdef ESP32
+    #define SRAM_CS     32
+    #define EPD_CS      15
+    #define EPD_DC      33  
+  #endif
+#endif
+
 #ifdef __AVR__
  #include <avr/power.h> // Required for 16 MHz Adafruit Trinket
 #endif
 
 #include "settings.h"
 
+#ifdef HAS_DISPLAY
+
+#define EPD_RESET   -1 // can set to -1 and share with microcontroller Reset!
+#define EPD_BUSY    -1 // can set to -1 to not use a pin (will wait a fixed delay)
+
+// Uncomment the following line if you are using 2.13" Monochrome EPD with SSD1680
+//ThinkInk_213_Mono_BN display(EPD_DC, EPD_RESET, EPD_CS, SRAM_CS, EPD_BUSY);
+ThinkInk_213_Mono_B72 display(EPD_DC, EPD_RESET, EPD_CS, SRAM_CS, EPD_BUSY);
+//ThinkInk_213_Mono_B73 display(EPD_DC, EPD_RESET, EPD_CS, SRAM_CS, EPD_BUSY);
+#define COLOR1 EPD_BLACK
+#define COLOR2 EPD_RED
+
+#endif
+
 #define RESET_BUTTON 27
-#define STATUS_LIGHT_OUT 25
+#define STATUS_LIGHT_OUT 13
 #define DO_EXPAND(VAL)  VAL ## 1
 #define EXPAND(VAL)     DO_EXPAND(VAL)
 
@@ -61,6 +92,7 @@ const char *root_ca="-----BEGIN CERTIFICATE-----\n"
 "5MsI+yMRQ+hDKXJioaldXgjUkK642M4UwtBV8ob2xJNDd2ZhwLnoQdeXeGADbkpy\n"
 "rqXRfboQnoZsG4q5WTP468SQvvG5\n"
 "-----END CERTIFICATE-----";
+//#endif
 
 #else
 /* *.ngrok.io root cert */
@@ -95,6 +127,7 @@ const char *root_ca="-----BEGIN CERTIFICATE-----\n"
 "mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d\n"
 "emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=\n"
 "-----END CERTIFICATE-----";
+//#endif
 
 #define STRINGIZE(x) #x
 #define STRINGIZE_VALUE_OF(x) STRINGIZE(x)
@@ -133,7 +166,6 @@ typedef struct _Ringer {
 #define RINGERS LED_COUNT
 Ringer ringers[RINGERS]; // set of led's to blink for ringing
 
-TinyPICO tp = TinyPICO();
 WebServer server(80);
 Settings conf;
 websockets::WebsocketsClient socket;
@@ -145,6 +177,13 @@ unsigned long previousWifiMillis = 0;
 bool IsLocalAP = true;
 Adafruit_NeoPixel *pixels;
 bool hasSocketConnected = false;
+
+#define TLS_CLIENT WiFiClientSecure
+TLS_CLIENT tls_client() {
+  WiFiClientSecure client;
+  client.setCACert(root_ca);
+  return client;
+}
 
 void handle_Main();
 void handle_Conf();
@@ -164,7 +203,7 @@ void socketEvent(websockets::WebsocketsEvent event, String data);
 void socketMessage(websockets::WebsocketsMessage message);
 void updateAgentStatusLed(int index, const String status);
 void refreshAccessToken();
-void refreshCapToken(int attempts=0);
+bool refreshCapToken(int attempts=0);
 void startWebsocket();
 void dnsPreload(const char *name);
 
@@ -249,18 +288,15 @@ void fetchLedAgentStatus(int index) {
   if (!conf.leds[index]) { return; }
   int agentId = conf.leds[index];
   Serial.printf("fetching status for agent: %d\n", agentId);
-  WiFiClientSecure client;
-  HTTPClient http;
-  client.setCACert(root_ca);
-  String url = String("https://"  API_HOST   "/api/v1/accounts/") + conf.account_id + "/agents/" + agentId;
-  http.setConnectTimeout(10000);// timeout in ms
-  http.setTimeout(10000); // 10 seconds
-  http.begin(client, url);
-  http.addHeader("Authorization", String("Bearer ") + conf.access_token);
-  int r = http.GET();
-  String body = http.getString();
+  TLS_CLIENT client = tls_client();
+  HttpClient http = HttpClient(client, API_HOST, 443);
+
+  String path = String("/api/v1/accounts/") + conf.account_id + "/agents/" + agentId;
+  http.setHttpResponseTimeout(10000);// timeout in ms
+  http.sendHeader("Authorization", String("Bearer ") + conf.access_token);
+  int r = http.get(path);
+  String body = http.responseBody();
   Serial.println(body);
-  http.end();
   if (r < 0) {
     Serial.println("error issuing device request");
     return;
@@ -293,11 +329,31 @@ void fetchLedAgentStatus(int index) {
   }
 }
 
+void testdrawtext(const char *text, uint16_t color, int line=0) {
+#ifdef HAS_DISPLAY
+  display.setCursor(0, line*20);
+  display.setTextColor(color);
+  display.setTextWrap(true);
+  display.print(text);
+#endif
+}
+#ifdef HAS_DISPLAY
+#else
+#endif
+
 void setup() {
   Serial.begin(115200);
 
-  delay(3000);
+  delay(1000);
+#ifdef HAS_DISPLAY
+  display.begin();
+  display.clearBuffer();
+  testdrawtext("CallTrackingMetrics... Loading", COLOR1, 1);
+  display.display();
+#endif
+
   conf.begin();
+  // wifi setup required
   if (conf.ssid && conf.pass) {
     Serial.printf("ssid: %s, pass: %s\n", conf.ssid, conf.pass);
   }
@@ -321,6 +377,11 @@ void setup() {
 
     WiFi.begin(conf.ssid, conf.pass);
     if (WiFi.waitForConnectResult() != WL_CONNECTED) {
+#ifdef HAS_DISPLAY
+  display.clearBuffer();
+  testdrawtext("WiFi Connection Failed", COLOR1, 0);
+  display.display();
+#endif
       Serial.println("Connection Failed!");
       setRedAll();
       delay(2000);
@@ -340,6 +401,12 @@ void setup() {
     IsLocalAP = false;
     Serial.print("IP address: ");
     Serial.println(DeviceIP);
+#ifdef HAS_DISPLAY
+  display.clearBuffer();
+  testdrawtext("Network Connected", COLOR1, 0);
+  testdrawtext((String("Configure at IP: ") + DeviceIP.toString()).c_str(), COLOR1, 3);
+  display.display();
+#endif
   } else {
     Serial.print("Setting AP...");
     Serial.println(default_ssid);
@@ -367,6 +434,7 @@ void setup() {
   server.on("/locate", HTTP_POST, handle_LocateLED);
   server.on("/flip_red_green", HTTP_POST, handle_FlipRedGreen);
   server.onNotFound(handleNotFound);
+  Serial.println("start the web server");
 
   server.begin();
   delay(1000);
@@ -376,6 +444,14 @@ void setup() {
     Serial.println("Connect to AP:");
     Serial.println(default_ssid);
     Serial.println(default_pass);
+#ifdef HAS_DISPLAY
+  display.clearBuffer();
+  testdrawtext("Finish Setup", COLOR1, 0);
+  testdrawtext((String("Connect to WiFi: ") + default_ssid).c_str(), COLOR1, 1);
+  testdrawtext((String("WiFi Password: ") + default_pass).c_str(), COLOR1, 2);
+  testdrawtext((String("Configure at IP: ") + DeviceIP.toString()).c_str(), COLOR1, 3);
+  display.display();
+#endif
   }
 
   if (conf.ctm_user_pending) {
@@ -384,10 +460,25 @@ void setup() {
     conf.ctm_configured = false;
     conf.save();
     linkTimerPending = true;
+#ifdef HAS_DISPLAY
+    display.clearBuffer();
+    testdrawtext("Finish Setup", COLOR1, 0);
+    testdrawtext((String("Connect to WiFi: ") + default_ssid).c_str(), COLOR1, 1);
+    testdrawtext((String("WiFi Password: ") + default_pass).c_str(), COLOR1, 2);
+    testdrawtext((String("Configure at IP: ") + DeviceIP.toString()).c_str(), COLOR1, 3);
+    testdrawtext("Pending user link to https://app.calltrackingmetrics.com/", COLOR1, 4);
+    display.display();
+#endif
   } else if (conf.ctm_configured) {
     // fetch available statues
     fetchCustomStatus();
     startWebsocket();
+#ifdef HAS_DISPLAY
+    display.clearBuffer();
+    testdrawtext("CallTrackingMetrics Status Station", COLOR1, 0);
+    testdrawtext((String("Configure at IP: ") + DeviceIP.toString()).c_str(), COLOR1, 3);
+    display.display();
+#endif
   } else {
     conf.resetAgentLeds();
     conf.save();
@@ -404,10 +495,11 @@ void dnsPreload(const char *name) {
 
 void startWebsocket() {
   Serial.println("startWebsocket");
-  refreshCapToken();
-  if (captoken.length() > 0) {
+  bool didRefresh = refreshCapToken();
+  if (didRefresh && captoken.length() > 0) {
+    Serial.println("connecting socket");
 
-    tp.DotStar_SetPixelColor(0, 255, 0);
+    //tp.DotStar_SetPixelColor(0, 255, 0);
     dnsPreload(SOC_HOST);
 
     socket.setCACert(root_ca);
@@ -430,7 +522,7 @@ void startWebsocket() {
     Serial.printf("unable to init captoken '%s' is invalid!\n", captoken.c_str());
     hasSocketConnected = false;
     socketClosed = true;
-    tp.DotStar_SetPixelColor(100, 255, 100);
+    //tp.DotStar_SetPixelColor(100, 255, 100);
   }
 }
 
@@ -598,7 +690,7 @@ void loop() {
   }
 
   if (conf.ctm_user_pending) {
-    tp.DotStar_CycleColor(25);
+    //tp.DotStar_CycleColor(25);
     int linkCheckStatusDeltaSeconds = (now - lastLinkTimerCheck) / 1000;
     if (linkTimerPending && linkCheckStatusDeltaSeconds > 5) {
       blinkGreen();
@@ -744,8 +836,9 @@ void handle_Main() {
     "<body>"
       "<header>"
         "<div class='logo-trigger_wrapper'><img src='https://www.calltrackingmetrics.com/wp-content/themes/ctm-theme/img/ctm_logo.svg'/></div>"
+        "<a href='/link_setup'>Connect Device</a>"
       "</header>"
-      "<div class='accordion' id='settings'>"
+      "<div class='accordion' id='settings' %s>"
         "<div class='accordion-item'>"
           "<h2 class='accordion-header' id='headingOne'>"
           "<button class='accordion-button collapsed' type='button' data-bs-toggle='collapse' data-bs-target='#collapseOne' aria-expanded='false' "
@@ -761,7 +854,6 @@ void handle_Main() {
                 "<label>PASS</label><input type='password' name='pass' value='%s'/><br/>"
                 "<input type='submit' value='Save'/>"
               "</form>"
-              "<a href='/link_setup'>Connect Device</a>"
             "</div>"
           "</div>"
         "</div>"
@@ -819,8 +911,8 @@ void handle_Main() {
       "</script>"
     "</body></html>";
 
-  snprintf(html_buffer, sizeof(html_buffer), fmt_string,
-(conf.ctm_configured ? "accordion-button collapsed collapse" : "accordion-collapse collapse show"),
+  snprintf(html_buffer, sizeof(html_buffer), fmt_string, (conf.ctm_configured ? "" : "style='display:none'"),
+                      "accordion-button collapsed collapse",
                       html_error, conf.ssid, conf.pass,
                       (conf.ctm_configured ? "accordion-collapse collapse show" : "accordion-button collapsed collapse"),
                       LED_COUNT, led_input_buffer, status_input_buffer);
@@ -888,21 +980,17 @@ void handle_Link() {
   Serial.println("link request");
   linkPending = true;
   linkError   = false;
-  WiFiClientSecure client;
-  HTTPClient http;
-  client.setCACert(root_ca);
+  TLS_CLIENT client = tls_client();
+  HttpClient http = HttpClient(client, API_HOST, 443);
 
   // secure requests read: https://techtutorialsx.com/2017/11/18/esp32-arduino-https-get-request/
-  const char *url = "https://" API_HOST "/oauth2/device_token";
-  Serial.printf("request device token at:%s\n", url);
-  http.setConnectTimeout(10000);// timeout in ms
-  http.setTimeout(10000); // 10 seconds
-  http.begin(client, url);
-//  http.addHeader("Content-Type", "application/json");
+  const char *path = "/oauth2/device_token";
+  Serial.printf("request device token at:%s\n", path);
+  http.setHttpResponseTimeout(10000);// timeout in ms
+  http.sendHeader("Content-Type", "application/x-www-form-urlencoded");
 
-  int r =  http.POST("client_id=" CLIENTID);
-  String body = http.getString();
-  http.end();
+  int r =  http.post(path, "application/x-www-form-urlencoded", "client_id=" CLIENTID);
+  String body = http.responseBody();
   Serial.println(body);
   Serial.println(body.length());
   if (r < 0) {
@@ -949,22 +1037,18 @@ void handle_Link() {
 }
 // helpful: https://savjee.be/2020/01/multitasking-esp32-arduino-freertos/
 void checkTokenStatus() {
-  const char *url = "https://" API_HOST "/oauth2/token";
+  const char *path = "/oauth2/token";
   Serial.println("checking token status");
   // send request to check device code
   //
   // possibly schedule the task again or free the device_code and give up
-  WiFiClientSecure client;
-  client.setCACert(root_ca);
-  HTTPClient http;
-  http.setConnectTimeout(10000);// timeout in ms
-  http.setTimeout(10000); // 10 seconds
-  http.begin(client, url);
-  http.addHeader("Content-Type", "application/x-www-form-urlencoded ");
+  TLS_CLIENT client = tls_client();
+  HttpClient http = HttpClient(client, API_HOST, 443);
+  http.setHttpResponseTimeout(10000);// timeout in ms
+  http.sendHeader("Content-Type", "application/x-www-form-urlencoded");
 
-  int r =  http.POST(String("client_id=" CLIENTID "&device_code=") + conf.device_code + "&grant_type=device_code");
-  String body = http.getString();
-  http.end();
+  int r =  http.post(path, "application/x-www-form-urlencoded", String("client_id=" CLIENTID "&device_code=") + conf.device_code + "&grant_type=device_code");
+  String body = http.responseBody();
   Serial.println(body);
   Serial.println(body.length());
   if (r < 0) {
@@ -1017,8 +1101,8 @@ void checkTokenStatus() {
       Serial.printf("access_token: %s\n", conf.access_token);
       conf.save();
       Serial.println("Access token saved - doing one more reboot");
-      tp.DotStar_Clear();
-      tp.DotStar_SetPixelColor(0, 255, 0);
+      //tp.DotStar_Clear();
+      //tp.DotStar_SetPixelColor(0, 255, 0);
       delay(2000);
       Serial.println("Rebooting...");
       delay(1000);
@@ -1119,7 +1203,7 @@ void handle_SaveAgents() {
 }
 
 void handle_AgentLookup() {
-  String url = String("https://" API_HOST "/api/v1/");
+  String url = String("/api/v1/");
   if (server.hasArg("q")) {
     url += "lookup.json?descriptions=1&global=0&idstr=0&object_type=user&search=" + url_encode(server.arg("q"));
   } else if (server.hasArg("term")) {
@@ -1128,17 +1212,15 @@ void handle_AgentLookup() {
     url += "lookup.json?descriptions=1&global=0&object_type=user&idstr=0";
   }
   Serial.printf("lookup: %s\n", url.c_str());
-  WiFiClientSecure client;
-  client.setCACert(root_ca);
-  HTTPClient http;
-  http.setConnectTimeout(10000);// timeout in ms
-  http.setTimeout(10000); // 10 seconds
-  http.begin(client, url);
-  http.addHeader("Authorization", String("Bearer ") + conf.access_token);
+  TLS_CLIENT client = tls_client();
+  HttpClient http = HttpClient(client, API_HOST, 443);
 
-  int r = http.GET();
-  String body = http.getString();
-  http.end();
+  http.setHttpResponseTimeout(10000);// timeout in ms
+  http.sendHeader("Authorization", String("Bearer ") + conf.access_token);
+
+  int r = http.get(url);
+  String body = http.responseBody();
+
   if (r < 0) {
     Serial.println("error issuing device request");
   }
@@ -1328,7 +1410,7 @@ void socketEvent(websockets::WebsocketsEvent event, String data) {
     Serial.println("WS(evt): unknown!");
   }
 }
-void refreshCapToken(int attempts) {
+bool refreshCapToken(int attempts) {
   captoken  = ""; // set to empty
   if (!conf.ctm_configured || !conf.access_token || !conf.account_id) {
     if (!conf.account_id) {
@@ -1340,42 +1422,38 @@ void refreshCapToken(int attempts) {
       refreshAccessToken();
       return refreshCapToken(attempts+1);
     }
-    return;
+    return false;
   }
   Serial.println(String("fetch with access token:") + conf.access_token);
-  WiFiClientSecure client;
-  client.setCACert(root_ca);
-  HTTPClient http;
+  TLS_CLIENT client = tls_client();
+  HttpClient http = HttpClient(client, API_HOST, 443);
   // get the captoken for websocket access
   // curl -i -H 'Authorization: Bearer token' -X POST 
-  String captoken_url = String("https://" API_HOST "/api/v1/accounts/") + conf.account_id + "/users/captoken";
-  Serial.println(captoken_url);
+  String captoken_path = String("/api/v1/accounts/") + conf.account_id + "/users/captoken";
+  Serial.println(captoken_path);
 
-  http.setConnectTimeout(10000);// timeout in ms
-  http.setTimeout(10000); // 10 seconds
-  http.begin(client, captoken_url);
-  http.addHeader("Content-Type", "application/x-www-form-urlencoded ");
-  http.addHeader("Authorization", String("Bearer ") + conf.access_token);
+  http.setHttpResponseTimeout(10000);
+  http.sendHeader("Content-Type", "application/x-www-form-urlencoded");
+  http.sendHeader("Authorization", String("Bearer ") + conf.access_token);
   /*
    * curl -i -H 'Authorization: Bearer token' -X POST 'https://" API_HOST "/api/v1/accounts/{account_id}/users/captoken'
    */
 //  http.addHeader("Content-Type", "application/json");
 
-  int r =  http.POST(String("device_code=") + conf.device_code);
-  String body = http.getString();
-  http.end();
+  int r =  http.post(captoken_path, "application/x-www-form-urlencoded", String("device_code=") + conf.device_code);
+  String body = http.responseBody();
   Serial.println(body);
   Serial.println(body.length());
   if (r < 0) {
     Serial.println("error issuing device request");
-    return;
+    return false;
   }
   StaticJsonDocument<1024> doc;
   DeserializationError error = deserializeJson(doc, body);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
     Serial.println(error.f_str());
-    return;
+    return false;
   }
 
   JsonObject obj = doc.as<JsonObject>();
@@ -1393,27 +1471,29 @@ void refreshCapToken(int attempts) {
     }
   }
   captoken = (const char*)obj["token"]; // capture the token at start up
-  Serial.println("captoken:");
-  Serial.println(captoken);
+  if (captoken) {
+    Serial.println("captoken:");
+    Serial.println(captoken);
+    return true;
+  } else {
+    Serial.println("no captoken not authenticated!");
+    return false;
+  }
 }
 void refreshAccessToken() {
   if (!conf.ctm_configured || !conf.refresh_token) {
     Serial.println("unable to refresh without a refresh token!");
     return;
   }
-  const char *url = "https://" API_HOST "/oauth2/token";
+  const char *url = "/oauth2/token";
   Serial.println("refresh access token");
-  WiFiClientSecure client;
-  client.setCACert(root_ca);
-  HTTPClient http;
-  http.setConnectTimeout(10000);// timeout in ms
-  http.setTimeout(10000); // 10 seconds
-  http.begin(client, url);
-  http.addHeader("Content-Type", "application/x-www-form-urlencoded ");
+  TLS_CLIENT client = tls_client();
+  HttpClient http = HttpClient(client, API_HOST, 443);
+  http.setHttpResponseTimeout(10000);// timeout in ms
+  http.sendHeader("Content-Type", "application/x-www-form-urlencoded");
 
-  int r = http.POST(String("client_id=" CLIENTID "&device_code=") + conf.device_code + "&grant_type=refresh_token&refresh_token=" + conf.refresh_token);
-  String body = http.getString();
-  http.end();
+  int r = http.post(url, "application/x-www-form-urlencoded", String("client_id=" CLIENTID "&device_code=") + conf.device_code + "&grant_type=refresh_token&refresh_token=" + conf.refresh_token);
+  String body = http.responseBody();
   Serial.println(body);
   Serial.println(body.length());
   if (r < 0) {
@@ -1445,12 +1525,12 @@ void refreshAccessToken() {
     conf.user_id = (int)obj["user_id"];
     conf.expires_in = (int)obj["expires_in"];
     conf.save();
-    tp.DotStar_Clear();
-    tp.DotStar_SetPixelColor(0, 255, 0);
+    //tp.DotStar_Clear();
+    //tp.DotStar_SetPixelColor(0, 255, 0);
   } else {
     Serial.println("something is really messed up reset and turn lights red and wait here....");
-    tp.DotStar_Clear();
-    tp.DotStar_SetPixelColor(255, 0, 0);
+    //tp.DotStar_Clear();
+    //tp.DotStar_SetPixelColor(255, 0, 0);
     setRedAll();
     conf.reset();
     conf.save();
@@ -1477,19 +1557,16 @@ void refreshAllAgentStatus() {
   }
 
   Serial.printf("fetching status for agents\n");
-  WiFiClientSecure client;
-  HTTPClient http;
-  client.setCACert(root_ca);
-  String url = String("https://"  API_HOST   "/api/v1/accounts/") + conf.account_id + "/agents/group_status?ids=" + idList;
-  http.setConnectTimeout(10000);// timeout in ms
-  http.setTimeout(10000); // 10 seconds
-  http.begin(client, url);
-  http.addHeader("Authorization", String("Bearer ") + conf.access_token);
-  int r = http.GET();
-  String body = http.getString();
+  TLS_CLIENT client = tls_client();
+  HttpClient http = HttpClient(client, API_HOST, 443);
+  String url = String("/api/v1/accounts/") + conf.account_id + "/agents/group_status?ids=" + idList;
+  http.setHttpResponseTimeout(10000);// timeout in ms
+  http.sendHeader("Authorization", String("Bearer ") + conf.access_token);
+  int r = http.get(url);
+  String body = http.responseBody();
   Serial.println(url);
   Serial.println(body);
-  http.end();
+
   if (r < 0) {
     Serial.println("error issuing device request");
     return;
@@ -1539,19 +1616,15 @@ void refreshAllAgentStatus() {
 
 void fetchCustomStatus() {
   Serial.printf("fetching available statues for account: %d", conf.account_id);
-  WiFiClientSecure client;
-  HTTPClient http;
-  client.setCACert(root_ca);
+  TLS_CLIENT client = tls_client();
+  HttpClient http = HttpClient(client, API_HOST, 443);
     // fetch /api/v1/accounts/{account_id}/available_statuses?normalized=1
-  String url = String("https://"  API_HOST   "/api/v1/accounts/") + conf.account_id + "/available_statuses?normalized=1";
-  http.setConnectTimeout(10000);// timeout in ms
-  http.setTimeout(10000); // 10 seconds
-  http.begin(client, url);
-  http.addHeader("Authorization", String("Bearer ") + conf.access_token);
-  int r = http.GET();
-  String body = http.getString();
+  String url = String("/api/v1/accounts/") + conf.account_id + "/available_statuses?normalized=1";
+  http.setHttpResponseTimeout(10000);// timeout in ms
+  http.sendHeader("Authorization", String("Bearer ") + conf.access_token);
+  int r = http.get(url);
+  String body = http.responseBody();
   Serial.println(body);
-  http.end();
   if (r < 0) {
     Serial.println("error issuing device request");
     return;

@@ -39,3 +39,13 @@ Get a clientid from your app https://app.ctmdev.us/oauth_apps/
 ```
   CTM_SOC_HOST=<nic.ngrok.io CTM_API_HOST=<nic>.ngrok.io CTM_APP_HOST=<nic>.ngrok.io CTM_CLIENTID=aJOX4QK_QzADcxVG_ZVY2tCB1KgqffXpKuJUEQbcr48 make upload
 ```
+
+# Ethernet
+Ethernet libraries are more involved then wifi so we need a few extra things so far I believe   OPEnSLab-OSU/SSLClient is going to make this doable but it has a slightly
+different format for PEMs then ESP32 wifi client
+
+The follow python from: https://github.com/OPEnSLab-OSU/SSLClient/tree/master/tools/pycert_bearssl
+Can be used to grab our pem file and generate the include/certs.h file
+```
+python3 pycert_bearssl.py download app.calltrackingmetrics.com --output include/certs.h
+```
