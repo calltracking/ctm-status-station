@@ -9,7 +9,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <WiFiClientSecure.h>
-#include <ArduinoHttpClient.h>
+#include <HTTPClient.h>
 #include <Wire.h>
 #include <ArduinoJson.h> // see: https://arduinojson.org/v6/api/jsonobject/containskey/
 #include <ArduinoWebsockets.h>
@@ -178,11 +178,16 @@ bool IsLocalAP = true;
 Adafruit_NeoPixel *pixels;
 bool hasSocketConnected = false;
 
-#define TLS_CLIENT WiFiClientSecure
-TLS_CLIENT tls_client() {
-  WiFiClientSecure client;
-  client.setCACert(root_ca);
-  return client;
+void setup_https(WiFiClientSecure *client, HTTPClient *http, const String &host, const String &path) {
+  client->setCACert(root_ca);
+  Serial.println("setup secure wifi client");
+  http->setConnectTimeout(10000);// timeout in ms
+  http->setTimeout(10000); // 10 seconds
+  Serial.println("timers set");
+  String url = String("https://") + host + path;
+  Serial.println("begin client");
+  http->begin(*client, url);
+  Serial.println("https client ready");
 }
 
 void handle_Main();
@@ -288,14 +293,16 @@ void fetchLedAgentStatus(int index) {
   if (!conf.leds[index]) { return; }
   int agentId = conf.leds[index];
   Serial.printf("fetching status for agent: %d\n", agentId);
-  TLS_CLIENT client = tls_client();
-  HttpClient http = HttpClient(client, API_HOST, 443);
 
+  WiFiClientSecure client;
+  HTTPClient http;
   String path = String("/api/v1/accounts/") + conf.account_id + "/agents/" + agentId;
-  http.setHttpResponseTimeout(10000);// timeout in ms
-  http.sendHeader("Authorization", String("Bearer ") + conf.access_token);
-  int r = http.get(path);
-  String body = http.responseBody();
+  setup_https(&client, &http, API_HOST, path);
+
+  http.addHeader("Authorization", String("Bearer ") + conf.access_token);
+  int r = http.GET();
+  String body = http.getString();
+  http.end();
   Serial.println(body);
   if (r < 0) {
     Serial.println("error issuing device request");
@@ -331,7 +338,7 @@ void fetchLedAgentStatus(int index) {
 
 void testdrawtext(const char *text, uint16_t color, int line=0) {
 #ifdef HAS_DISPLAY
-  display.setCursor(0, line*20);
+  display.setCursor(20, (line+1)*20);
   display.setTextColor(color);
   display.setTextWrap(true);
   display.print(text);
@@ -980,17 +987,18 @@ void handle_Link() {
   Serial.println("link request");
   linkPending = true;
   linkError   = false;
-  TLS_CLIENT client = tls_client();
-  HttpClient http = HttpClient(client, API_HOST, 443);
+  WiFiClientSecure client;
+  HTTPClient http;
+  const char *path = "/oauth2/device_token";
+  setup_https(&client, &http, API_HOST, path);
 
   // secure requests read: https://techtutorialsx.com/2017/11/18/esp32-arduino-https-get-request/
-  const char *path = "/oauth2/device_token";
   Serial.printf("request device token at:%s\n", path);
-  http.setHttpResponseTimeout(10000);// timeout in ms
-  http.sendHeader("Content-Type", "application/x-www-form-urlencoded");
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
-  int r =  http.post(path, "application/x-www-form-urlencoded", "client_id=" CLIENTID);
-  String body = http.responseBody();
+  int r =  http.POST("client_id=" CLIENTID);
+  String body = http.getString();
+  http.end();
   Serial.println(body);
   Serial.println(body.length());
   if (r < 0) {
@@ -1042,13 +1050,14 @@ void checkTokenStatus() {
   // send request to check device code
   //
   // possibly schedule the task again or free the device_code and give up
-  TLS_CLIENT client = tls_client();
-  HttpClient http = HttpClient(client, API_HOST, 443);
-  http.setHttpResponseTimeout(10000);// timeout in ms
-  http.sendHeader("Content-Type", "application/x-www-form-urlencoded");
+  WiFiClientSecure client;
+  HTTPClient http;
+  setup_https(&client, &http, API_HOST, path);
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
-  int r =  http.post(path, "application/x-www-form-urlencoded", String("client_id=" CLIENTID "&device_code=") + conf.device_code + "&grant_type=device_code");
-  String body = http.responseBody();
+  int r =  http.POST(String("client_id=" CLIENTID "&device_code=") + conf.device_code + "&grant_type=device_code");
+  String body = http.getString();
+  http.end();
   Serial.println(body);
   Serial.println(body.length());
   if (r < 0) {
@@ -1203,23 +1212,24 @@ void handle_SaveAgents() {
 }
 
 void handle_AgentLookup() {
-  String url = String("/api/v1/");
+  String path = String("/api/v1/");
   if (server.hasArg("q")) {
-    url += "lookup.json?descriptions=1&global=0&idstr=0&object_type=user&search=" + url_encode(server.arg("q"));
+    path += "lookup.json?descriptions=1&global=0&idstr=0&object_type=user&search=" + url_encode(server.arg("q"));
   } else if (server.hasArg("term")) {
-    url += "lookupids.json?descriptions=1&global=0&idstr=0&object_type=user&ids[]=" + server.arg("term");
+    path += "lookupids.json?descriptions=1&global=0&idstr=0&object_type=user&ids[]=" + server.arg("term");
   } else {
-    url += "lookup.json?descriptions=1&global=0&object_type=user&idstr=0";
+    path += "lookup.json?descriptions=1&global=0&object_type=user&idstr=0";
   }
-  Serial.printf("lookup: %s\n", url.c_str());
-  TLS_CLIENT client = tls_client();
-  HttpClient http = HttpClient(client, API_HOST, 443);
+  Serial.printf("lookup: %s\n", path.c_str());
+  WiFiClientSecure client;
+  HTTPClient http;
+  setup_https(&client, &http, API_HOST, path);
 
-  http.setHttpResponseTimeout(10000);// timeout in ms
-  http.sendHeader("Authorization", String("Bearer ") + conf.access_token);
+  http.addHeader("Authorization", String("Bearer ") + conf.access_token);
 
-  int r = http.get(url);
-  String body = http.responseBody();
+  int r = http.GET();
+  String body = http.getString();
+  http.end();
 
   if (r < 0) {
     Serial.println("error issuing device request");
@@ -1425,23 +1435,27 @@ bool refreshCapToken(int attempts) {
     return false;
   }
   Serial.println(String("fetch with access token:") + conf.access_token);
-  TLS_CLIENT client = tls_client();
-  HttpClient http = HttpClient(client, API_HOST, 443);
+  WiFiClientSecure client;
+  HTTPClient http;
   // get the captoken for websocket access
   // curl -i -H 'Authorization: Bearer token' -X POST 
   String captoken_path = String("/api/v1/accounts/") + conf.account_id + "/users/captoken";
   Serial.println(captoken_path);
+  setup_https(&client, &http, API_HOST, captoken_path);
 
-  http.setHttpResponseTimeout(10000);
-  http.sendHeader("Content-Type", "application/x-www-form-urlencoded");
-  http.sendHeader("Authorization", String("Bearer ") + conf.access_token);
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+  http.addHeader("Authorization", String("Bearer ") + conf.access_token);
   /*
    * curl -i -H 'Authorization: Bearer token' -X POST 'https://" API_HOST "/api/v1/accounts/{account_id}/users/captoken'
    */
 //  http.addHeader("Content-Type", "application/json");
 
-  int r =  http.post(captoken_path, "application/x-www-form-urlencoded", String("device_code=") + conf.device_code);
-  String body = http.responseBody();
+  Serial.println(String("Authorization: Bearer ") + conf.access_token);
+  Serial.println(String("device_code=") + conf.device_code);
+  int r =  http.POST(String("device_code=") + conf.device_code);
+  String body = http.getString();
+  http.end();
+
   Serial.println(body);
   Serial.println(body.length());
   if (r < 0) {
@@ -1485,15 +1499,16 @@ void refreshAccessToken() {
     Serial.println("unable to refresh without a refresh token!");
     return;
   }
-  const char *url = "/oauth2/token";
+  const char *path = "/oauth2/token";
   Serial.println("refresh access token");
-  TLS_CLIENT client = tls_client();
-  HttpClient http = HttpClient(client, API_HOST, 443);
-  http.setHttpResponseTimeout(10000);// timeout in ms
-  http.sendHeader("Content-Type", "application/x-www-form-urlencoded");
+  WiFiClientSecure client;
+  HTTPClient http;
+  setup_https(&client, &http, API_HOST, path);
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
-  int r = http.post(url, "application/x-www-form-urlencoded", String("client_id=" CLIENTID "&device_code=") + conf.device_code + "&grant_type=refresh_token&refresh_token=" + conf.refresh_token);
-  String body = http.responseBody();
+  int r = http.POST(String("client_id=" CLIENTID "&device_code=") + conf.device_code + "&grant_type=refresh_token&refresh_token=" + conf.refresh_token);
+  String body = http.getString();
+  http.end();
   Serial.println(body);
   Serial.println(body.length());
   if (r < 0) {
@@ -1557,13 +1572,14 @@ void refreshAllAgentStatus() {
   }
 
   Serial.printf("fetching status for agents\n");
-  TLS_CLIENT client = tls_client();
-  HttpClient http = HttpClient(client, API_HOST, 443);
+  WiFiClientSecure client;
+  HTTPClient http;
   String url = String("/api/v1/accounts/") + conf.account_id + "/agents/group_status?ids=" + idList;
-  http.setHttpResponseTimeout(10000);// timeout in ms
-  http.sendHeader("Authorization", String("Bearer ") + conf.access_token);
-  int r = http.get(url);
-  String body = http.responseBody();
+  setup_https(&client, &http, API_HOST, url);
+  http.addHeader("Authorization", String("Bearer ") + conf.access_token);
+  int r = http.GET();
+  String body = http.getString();
+  http.end();
   Serial.println(url);
   Serial.println(body);
 
@@ -1616,15 +1632,19 @@ void refreshAllAgentStatus() {
 
 void fetchCustomStatus() {
   Serial.printf("fetching available statues for account: %d", conf.account_id);
-  TLS_CLIENT client = tls_client();
-  HttpClient http = HttpClient(client, API_HOST, 443);
+  WiFiClientSecure client;
+  HTTPClient http;
     // fetch /api/v1/accounts/{account_id}/available_statuses?normalized=1
   String url = String("/api/v1/accounts/") + conf.account_id + "/available_statuses?normalized=1";
-  http.setHttpResponseTimeout(10000);// timeout in ms
-  http.sendHeader("Authorization", String("Bearer ") + conf.access_token);
-  int r = http.get(url);
-  String body = http.responseBody();
+  setup_https(&client, &http, API_HOST, url);
+
+  http.addHeader("Authorization", String("Bearer ") + conf.access_token);
+  Serial.println("issue https get");
+  int r = http.GET();
+  Serial.printf("get: %d\n", r);
+  String body = http.getString();
   Serial.println(body);
+  http.end();
   if (r < 0) {
     Serial.println("error issuing device request");
     return;
