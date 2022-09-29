@@ -49,7 +49,7 @@ ThinkInk_213_Mono_B72 display(EPD_DC, EPD_RESET, EPD_CS, SRAM_CS, EPD_BUSY);
 #endif
 
 #define RESET_BUTTON 27
-#define STATUS_LIGHT_OUT 13
+#define STATUS_LIGHT_OUT 25
 #define DO_EXPAND(VAL)  VAL ## 1
 #define EXPAND(VAL)     DO_EXPAND(VAL)
 
