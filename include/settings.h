@@ -15,6 +15,7 @@ struct Settings {
   bool good();  // checks the data saved and confirms whether it looks reasonable and likely good for use e.g. the data is reasonable
 
   void reset(); // reset all settings
+  void resetWifi(); // reset all settings
   void resetAgentLeds();
 
   bool ledsConfigured();

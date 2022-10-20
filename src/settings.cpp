@@ -48,6 +48,15 @@ void Settings::reset() {
   this->wifi_configured = false;
   this->resetAgentLeds();
 }
+
+void Settings::resetWifi() {
+  Serial.println("resetWifi");
+  delay(1000);
+  this->wifi_configured = false;
+  memset(this->ssid, 0, 32);
+  memset(this->pass, 0, 32);
+}
+
 void Settings::resetAgentLeds() {
   for (int i =0; i < LED_COUNT; ++i) {
     this->leds[i] = 0;

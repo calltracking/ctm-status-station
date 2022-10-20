@@ -1,10 +1,13 @@
 /**
  * configure and listen for account or team events
  */
-#define HAS_DISPLAY
+#undef HAS_DISPLAY
 #define CTM_PRODUCTION
 
 //#define LIGHT_TEST
+#ifndef HAS_DISPLAY
+#include <TinyPICO.h>
+#endif
 #include <SPI.h>
 #include <WiFi.h>
 #include <WebServer.h>
@@ -361,7 +364,7 @@ void setup() {
 
   conf.begin();
   // wifi setup required
-  if (conf.ssid && conf.pass) {
+  if (conf.ssid && conf.pass && strlen(conf.ssid) > 0) {
     Serial.printf("ssid: %s, pass: %s\n", conf.ssid, conf.pass);
   }
   pinMode(RESET_BUTTON, INPUT_PULLDOWN);
@@ -379,7 +382,7 @@ void setup() {
   return;
 #endif
 
-  if (conf.good() && conf.wifi_configured) {
+  if (conf.good() && conf.wifi_configured && strlen(conf.ssid) > 0) {
     Serial.print("Connecting to network...");
 
     WiFi.begin(conf.ssid, conf.pass);
@@ -393,7 +396,7 @@ void setup() {
       setRedAll();
       delay(2000);
       Serial.println("Reset SSID...");
-      conf.reset();
+      conf.resetWifi();
       conf.save();
       delay(2000);
       Serial.println("Rebooting...");
@@ -409,10 +412,10 @@ void setup() {
     Serial.print("IP address: ");
     Serial.println(DeviceIP);
 #ifdef HAS_DISPLAY
-  display.clearBuffer();
-  testdrawtext("Network Connected", COLOR1, 0);
-  testdrawtext((String("Configure at IP: ") + DeviceIP.toString()).c_str(), COLOR1, 3);
-  display.display();
+    display.clearBuffer();
+    testdrawtext("Network Connected", COLOR1, 0);
+    testdrawtext((String("Configure at IP: ") + DeviceIP.toString()).c_str(), COLOR1, 3);
+    display.display();
 #endif
   } else {
     Serial.print("Setting AP...");
@@ -420,7 +423,7 @@ void setup() {
     Serial.println(default_pass);
     WiFi.softAP(default_ssid, default_pass);
     DeviceIP = WiFi.softAPIP();
-    conf.reset();
+    conf.resetWifi();
     conf.ctm_user_pending = false;
     conf.save();
     IsLocalAP = true;
@@ -452,16 +455,17 @@ void setup() {
     Serial.println(default_ssid);
     Serial.println(default_pass);
 #ifdef HAS_DISPLAY
-  display.clearBuffer();
-  testdrawtext("Finish Setup", COLOR1, 0);
-  testdrawtext((String("Connect to WiFi: ") + default_ssid).c_str(), COLOR1, 1);
-  testdrawtext((String("WiFi Password: ") + default_pass).c_str(), COLOR1, 2);
-  testdrawtext((String("Configure at IP: ") + DeviceIP.toString()).c_str(), COLOR1, 3);
-  display.display();
+    display.clearBuffer();
+    testdrawtext("Finish Setup", COLOR1, 0);
+    testdrawtext((String("Connect to WiFi: ") + default_ssid).c_str(), COLOR1, 1);
+    testdrawtext((String("WiFi Password: ") + default_pass).c_str(), COLOR1, 2);
+    testdrawtext((String("Configure at IP: ") + DeviceIP.toString()).c_str(), COLOR1, 3);
+    display.display();
 #endif
+    return;
   }
 
-  if (conf.ctm_user_pending) {
+  if (conf.ctm_user_pending && conf.wifi_configured) {
     blinkOrange();
     Serial.println("pending user configuration to link device");
     conf.ctm_configured = false;
@@ -476,7 +480,7 @@ void setup() {
     testdrawtext("Pending user link to https://app.calltrackingmetrics.com/", COLOR1, 4);
     display.display();
 #endif
-  } else if (conf.ctm_configured) {
+  } else if (conf.ctm_configured && conf.wifi_configured) {
     // fetch available statues
     fetchCustomStatus();
     startWebsocket();
@@ -487,8 +491,6 @@ void setup() {
     display.display();
 #endif
   } else {
-    conf.resetAgentLeds();
-    conf.save();
     blinkBlue();
     Serial.println("device is reset");
   }
@@ -625,7 +627,7 @@ void loop() {
   lightTestCycle();
   return;
 #endif
-  if (conf.ctm_configured) {
+  if (conf.ctm_configured && conf.wifi_configured) {
     if (socketClosed || !hasSocketConnected) { 
       delay(1000);
       Serial.println("lost connection - reconnect?");
@@ -1547,7 +1549,7 @@ void refreshAccessToken() {
     //tp.DotStar_Clear();
     //tp.DotStar_SetPixelColor(255, 0, 0);
     setRedAll();
-    conf.reset();
+    conf.resetWifi();
     conf.save();
     while(1) {
       delay(1000);
