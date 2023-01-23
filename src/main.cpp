@@ -364,8 +364,14 @@ void setup() {
 
   conf.begin();
   // wifi setup required
-  if (conf.ssid && conf.pass && strlen(conf.ssid) > 0) {
-    Serial.printf("ssid: %s, pass: %s\n", conf.ssid, conf.pass);
+  if (conf.ssid && conf.pass && strnlen(conf.ssid, 32) > 0) {
+    if (strnlen(conf.ssid, 33) == 33) {
+      Serial.printf("ssid and pass not configured or eeprom is corrupted and must be reset\n");
+      conf.reset();
+      conf.save();
+    } else {
+      Serial.printf("ssid: %s, pass: %s\n", conf.ssid, conf.pass);
+    }
   }
   pinMode(RESET_BUTTON, INPUT_PULLDOWN);
 
@@ -430,6 +436,11 @@ void setup() {
   }
     
   red_green_flipped = conf.red_green_flipped;
+  if (red_green_flipped) {
+    Serial.println("red green flipped: to true");
+  } else {
+    Serial.println("red green flipped: to false");
+  }
 
   server.on("/", HTTP_GET, handle_Main);
   server.on("/conf", HTTP_POST, handle_Conf);
@@ -627,7 +638,7 @@ void loop() {
   lightTestCycle();
   return;
 #endif
-  if (conf.ctm_configured && conf.wifi_configured) {
+  if (conf.ctm_configured && conf.wifi_configured && conf.account_id > 0) {
     if (socketClosed || !hasSocketConnected) { 
       delay(1000);
       Serial.println("lost connection - reconnect?");
@@ -1183,7 +1194,17 @@ void handle_SaveColors() {
 }
 
 void handle_FlipRedGreen() {
-  red_green_flipped = conf.red_green_flipped = !red_green_flipped;
+  Serial.println("flip red green\n");
+  if (red_green_flipped) {
+    red_green_flipped = conf.red_green_flipped = false;
+  } else {
+    red_green_flipped = conf.red_green_flipped = true;
+  }
+  if (red_green_flipped) {
+    Serial.println("now flipped: to true");
+  } else {
+    Serial.println("now flipped: to false");
+  }
   conf.save();
   server.sendHeader("Location","/");
   server.send(303);
