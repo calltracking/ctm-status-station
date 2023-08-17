@@ -6,8 +6,11 @@
 
 //#define LIGHT_TEST
 #ifndef HAS_DISPLAY
+#ifndef WROOM_PINS
 #include <TinyPICO.h>
 #endif
+#endif
+
 #include <SPI.h>
 #include <WiFi.h>
 #include <WebServer.h>

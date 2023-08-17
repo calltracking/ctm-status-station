@@ -1,6 +1,9 @@
 ROOT_DIR:=$(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
 
-all: tinypico_status
+all: wroom_s3
+
+wroom_s3:
+	pio run -e s3wroom_1 -j 2 --target upload
 
 tinypico: tinypico_status
 	pio run -e tinypico -j 2 --target upload && sleep 1;  pio device monitor
