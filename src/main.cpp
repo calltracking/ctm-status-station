@@ -161,6 +161,7 @@ uint64_t lastPing = 0;
 uint64_t lastStatusCheck = 0;
 int LocateLED = -1;
 int locateCycles = 0;
+StaticJsonDocument<2048> doc;
 
 String captoken;
 bool hasAuthGranted = false;
@@ -314,7 +315,6 @@ void fetchLedAgentStatus(int index) {
     Serial.println("error issuing device request");
     return;
   }
-  StaticJsonDocument<2048> doc;
   DeserializationError error = deserializeJson(doc, body);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
@@ -1022,7 +1022,6 @@ void handle_Link() {
     Serial.println("error issuing device request");
     return;
   }
-  StaticJsonDocument<1024> doc;
   DeserializationError error = deserializeJson(doc, body);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
@@ -1084,7 +1083,6 @@ void checkTokenStatus() {
     linkTimerPending = false;
     return;
   }
-  StaticJsonDocument<1024> doc;
   DeserializationError error = deserializeJson(doc, body);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
@@ -1261,7 +1259,6 @@ void handle_AgentLookup() {
   if (r < 0) {
     Serial.println("error issuing device request");
   }
-  StaticJsonDocument<2048> doc;
   DeserializationError error = deserializeJson(doc, body);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
@@ -1333,7 +1330,6 @@ void socketMessage(websockets::WebsocketsMessage message) {
   //Serial.println(data);
 
   if (data == "42[\"access.handshake\"]") {
-    StaticJsonDocument<1024> doc;
     doc["id"] = conf.user_id;
     doc["account"] = conf.account_id;
     doc["captoken"] = captoken;
@@ -1348,7 +1344,6 @@ void socketMessage(websockets::WebsocketsMessage message) {
     lastPing = millis();
     // 42["auth.granted",{"account":18614}]
   } else if (data_str[0] == '4' && data_str[1] == '2' && data_str[2] == '[') {
-    StaticJsonDocument<1024> doc;
     data.remove(0,2);
     DeserializationError error = deserializeJson(doc, data);
     if (error) {
@@ -1489,7 +1484,6 @@ bool refreshCapToken(int attempts) {
     Serial.println("error issuing device request");
     return false;
   }
-  StaticJsonDocument<1024> doc;
   DeserializationError error = deserializeJson(doc, body);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
@@ -1543,7 +1537,6 @@ void refreshAccessToken() {
     linkError   = true;
     return;
   }
-  StaticJsonDocument<1024> doc;
   DeserializationError error = deserializeJson(doc, body);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
@@ -1575,6 +1568,7 @@ void refreshAccessToken() {
     //tp.DotStar_SetPixelColor(255, 0, 0);
     setRedAll();
     conf.resetWifi();
+    conf.ctm_configured = false;
     conf.save();
     while(1) {
       delay(1000);
@@ -1614,7 +1608,6 @@ void refreshAllAgentStatus() {
     Serial.println("error issuing device request");
     return;
   }
-  StaticJsonDocument<2048> doc;
   DeserializationError error = deserializeJson(doc, body);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
@@ -1676,7 +1669,6 @@ void fetchCustomStatus() {
     Serial.println("error issuing device request");
     return;
   }
-  StaticJsonDocument<1024> doc;
   DeserializationError error = deserializeJson(doc, body);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
