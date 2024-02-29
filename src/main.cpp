@@ -318,7 +318,7 @@ void fetchLedAgentStatus(int index) {
   DeserializationError error = deserializeJson(doc, body);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
-    Serial.println(error.f_str());
+    Serial.println(path);
     return;
   }
   JsonObject obj = doc.as<JsonObject>();
@@ -1025,7 +1025,7 @@ void handle_Link() {
   DeserializationError error = deserializeJson(doc, body);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
-    Serial.println(error.f_str());
+    Serial.println(path);
     return;
   }
 
@@ -1262,7 +1262,7 @@ void handle_AgentLookup() {
   DeserializationError error = deserializeJson(doc, body);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
-    Serial.println(error.f_str());
+    Serial.println(path);
     return;
   }
 
@@ -1487,7 +1487,7 @@ bool refreshCapToken(int attempts) {
   DeserializationError error = deserializeJson(doc, body);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
-    Serial.println(error.f_str());
+    Serial.println(captoken_path);
     return false;
   }
 
@@ -1540,7 +1540,7 @@ void refreshAccessToken() {
   DeserializationError error = deserializeJson(doc, body);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
-    Serial.println(error.f_str());
+    Serial.println(path);
     linkError = true;
     return;
   }
@@ -1611,7 +1611,7 @@ void refreshAllAgentStatus() {
   DeserializationError error = deserializeJson(doc, body);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
-    Serial.println(error.f_str());
+    Serial.println(url);
     return;
   }
   JsonObject obj = doc.as<JsonObject>();
@@ -1672,7 +1672,7 @@ void fetchCustomStatus() {
   DeserializationError error = deserializeJson(doc, body);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
-    Serial.println(error.f_str());
+    Serial.println(url);
     return;
   }
   JsonObject obj = doc.as<JsonObject>();
