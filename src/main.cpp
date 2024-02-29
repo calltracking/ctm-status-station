@@ -427,22 +427,32 @@ void setup() {
     display.display();
 #endif
   } else {
-    Serial.print("Setting AP...");
-    Serial.println(default_ssid);
-    Serial.println(default_pass);
-    WiFi.softAP(default_ssid, default_pass);
-    DeviceIP = WiFi.softAPIP();
     conf.resetWifi();
     conf.ctm_user_pending = false;
     conf.save();
+
+    Serial.print("Setting AP...");
+    Serial.println(default_ssid);
+    Serial.println(default_pass);
+    WiFi.softAPmacAddress();
+    WiFi.softAP(default_ssid, default_pass, 12, false, 8);
+    DeviceIP = WiFi.softAPIP();
+
     IsLocalAP = true;
+    Serial.print("IP address: ");
+    Serial.println(DeviceIP);
+
+    Serial.printf("Stations connected to soft-AP = %d\n", WiFi.softAPgetStationNum());
+
   }
-    
-  red_green_flipped = conf.red_green_flipped;
-  if (red_green_flipped) {
-    Serial.println("red green flipped: to true");
-  } else {
-    Serial.println("red green flipped: to false");
+ 
+  if (!IsLocalAP) {
+    red_green_flipped = conf.red_green_flipped;
+    if (red_green_flipped) {
+      Serial.println("red green flipped: to true");
+    } else {
+      Serial.println("red green flipped: to false");
+    }
   }
 
   server.on("/", HTTP_GET, handle_Main);
@@ -712,45 +722,47 @@ void loop() {
     resetCounter = 0;
   }
 
-  if (conf.ctm_user_pending) {
-    //tp.DotStar_CycleColor(25);
-    int linkCheckStatusDeltaSeconds = (now - lastLinkTimerCheck) / 1000;
-    if (linkTimerPending && linkCheckStatusDeltaSeconds > 5) {
-      blinkGreen();
-      lastLinkTimerCheck = now;
-      // execution polling status connection check
-      checkTokenStatus();
-    } else {
-      blinkOrange();
+  if (!IsLocalAP) {
+    if (conf.ctm_user_pending) {
+      //tp.DotStar_CycleColor(25);
+      int linkCheckStatusDeltaSeconds = (now - lastLinkTimerCheck) / 1000;
+      if (linkTimerPending && linkCheckStatusDeltaSeconds > 5) {
+        blinkGreen();
+        lastLinkTimerCheck = now;
+        // execution polling status connection check
+        checkTokenStatus();
+      } else {
+        blinkOrange();
+      }
     }
-  }
-  if (!conf.ctm_user_pending && !conf.ctm_configured) {
-    Serial.printf("not linked configure at: %s\n", DeviceIP.toString().c_str());
-    blinkBlue();
-  }
+    if (!conf.ctm_user_pending && !conf.ctm_configured) {
+      Serial.printf("not linked configure at: %s\n", DeviceIP.toString().c_str());
+      blinkBlue();
+    }
 
-  if (!IsLocalAP  && WiFi.status() != WL_CONNECTED && (now - previousWifiMillis) > WIFIReConnectInteval) {
-    // wifi connection lost
-    Serial.println("Reconnecting to WiFi...");
-    setErrorAll();
-    WiFi.disconnect();
-    WiFi.reconnect();
-    previousWifiMillis = now;
-  }
+    if (!IsLocalAP  && WiFi.status() != WL_CONNECTED && (now - previousWifiMillis) > WIFIReConnectInteval) {
+      // wifi connection lost
+      Serial.println("Reconnecting to WiFi...");
+      setErrorAll();
+      WiFi.disconnect();
+      WiFi.reconnect();
+      previousWifiMillis = now;
+    }
 
-  if (LocateLED > -1) {
-    locateCycles++;
-    if (locateCycles  < 10) {
-      setOrange(LocateLED);
-      pixels->show();
-      delay(1000);
-      Serial.printf("locating %d cycles: %d\n", LocateLED, locateCycles);
-    } else {
-      locateCycles = 0;
-      LocateLED = -1;
-      setOffAll();
-      refreshAllAgentStatus();
-      Serial.println("locate done resume all");
+    if (LocateLED > -1) {
+      locateCycles++;
+      if (locateCycles  < 10) {
+        setOrange(LocateLED);
+        pixels->show();
+        delay(1000);
+        Serial.printf("locating %d cycles: %d\n", LocateLED, locateCycles);
+      } else {
+        locateCycles = 0;
+        LocateLED = -1;
+        setOffAll();
+        refreshAllAgentStatus();
+        Serial.println("locate done resume all");
+      }
     }
   }
 }
@@ -1279,6 +1291,7 @@ void handleNotFound() {
   server.send(404, "text/plain", "404: Not found"); // Send HTTP status 404 (Not Found) when there's no handler for the URI in the request
 }
 void updateAgentStatusLed(int ledIndex, const String status) {
+  if (ledIndex < 0 || ledIndex >= RINGERS) { Serial.println("ledIndex out of bounds abort"); return; }
   ringers[ledIndex].on = false;
   if (status == "inbound" || status == "outbound" || status == "video_member") {
     //printf("set red from %s for %d\n", status.c_str(), ledIndex);
@@ -1294,6 +1307,7 @@ void updateAgentStatusLed(int ledIndex, const String status) {
     ringers[ledIndex].on = true;
     ringers[ledIndex].lastRing = millis();
   } else {
+    Serial.println("configure pixels for custom status");
     for (int i = 0; i < MAX_CUSTOM_STATUS; ++i) {
       if (status == conf.custom_status_index[i]) {
         int g = conf.custom_status_color[i][1], r = conf.custom_status_color[i][0], b = conf.custom_status_color[i][2];
