@@ -949,6 +949,10 @@ void handle_Main() {
 }
 
 void handle_Conf() {
+
+  server.sendHeader("Location","/");
+  server.send(303);
+
   if (server.hasArg("ssid_config")) {
     // configuring the wifi
     if (server.hasArg("ssid") && server.hasArg("pass") && server.arg("ssid") != NULL && server.arg("pass") != NULL) {
@@ -967,9 +971,6 @@ void handle_Conf() {
       return;
     }
   }
-
-  server.sendHeader("Location","/");
-  server.send(303);
 }
 
 void handle_LinkStatus() {
