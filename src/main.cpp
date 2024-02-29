@@ -1462,7 +1462,9 @@ bool refreshCapToken(int attempts) {
   // get the captoken for websocket access
   // curl -i -H 'Authorization: Bearer token' -X POST 
   String captoken_path = String("/api/v1/accounts/") + conf.account_id + "/users/captoken";
+  Serial.println("Requesting captoken: ");
   Serial.println(captoken_path);
+  Serial.println(conf.access_token);
   setup_https(&client, &http, API_HOST, captoken_path);
 
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
@@ -1478,8 +1480,8 @@ bool refreshCapToken(int attempts) {
   String body = http.getString();
   http.end();
 
-  Serial.println(body);
-  Serial.println(body.length());
+  //Serial.println(body);
+  //Serial.println(body.length());
   if (r < 0) {
     Serial.println("error issuing device request");
     return false;
