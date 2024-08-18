@@ -1,7 +1,6 @@
 /**
  * configure and listen for account or team events
  */
-#undef HAS_DISPLAY
 #define CTM_PRODUCTION
 
 //#define LIGHT_TEST
@@ -161,7 +160,7 @@ uint64_t lastPing = 0;
 uint64_t lastStatusCheck = 0;
 int LocateLED = -1;
 int locateCycles = 0;
-StaticJsonDocument<2048> doc;
+JsonDocument doc;
 
 String captoken;
 bool hasAuthGranted = false;
@@ -171,14 +170,14 @@ typedef struct _Ringer {
   uint64_t lastRing;
 } Ringer;
 #define RINGERS LED_COUNT
-Ringer ringers[RINGERS]; // set of led's to blink for ringing
+Ringer ringers[RINGERS+1]; // set of led's to blink for ringing
 
-WebServer server(80);
 Settings conf;
 websockets::WebsocketsClient socket;
 IPAddress DeviceIP;
 const unsigned long WIFIReConnectInteval = 30000;
 unsigned long previousWifiMillis = 0;
+WebServer server(80);
 
 
 bool IsLocalAP = true;
@@ -197,6 +196,8 @@ void setup_https(WiFiClientSecure *client, HTTPClient *http, const String &host,
   Serial.println("https client ready");
 }
 
+void handle_Style();
+void handle_Script();
 void handle_Main();
 void handle_Conf();
 void handle_LinkSetup();
@@ -376,7 +377,9 @@ void setup() {
       Serial.printf("ssid: %s, pass: %s\n", conf.ssid, conf.pass);
     }
   }
+#ifdef HAS_BUTTON
   pinMode(RESET_BUTTON, INPUT_PULLDOWN);
+#endif
 
   pixels = new Adafruit_NeoPixel(LED_COUNT, STATUS_LIGHT_OUT, NEO_GRB + NEO_KHZ800);
   pixels->begin(); // INITIALIZE NeoPixel strip object (REQUIRED)
@@ -405,8 +408,8 @@ void setup() {
       setRedAll();
       delay(2000);
       Serial.println("Reset SSID...");
-      conf.resetWifi();
-      conf.save();
+      //conf.resetWifi();
+      //conf.save();
       delay(2000);
       Serial.println("Rebooting...");
       delay(1000);
@@ -456,6 +459,8 @@ void setup() {
   }
 
   server.on("/", HTTP_GET, handle_Main);
+  server.on("/script.js", HTTP_GET, handle_Script);
+  server.on("/style.css", HTTP_GET, handle_Style);
   server.on("/conf", HTTP_POST, handle_Conf);
   server.on("/link_setup", HTTP_GET, handle_LinkSetup);
   server.on("/link", HTTP_POST, handle_Link);
@@ -472,6 +477,8 @@ void setup() {
 
   server.begin();
   delay(1000);
+  Serial.printf("server started with %d LED's\n", LED_COUNT);
+
   Serial.println("setup complete");
     
   if (IsLocalAP) {
@@ -518,6 +525,7 @@ void setup() {
     blinkBlue();
     Serial.println("device is reset");
   }
+  lastPing = millis();
 }
 void dnsPreload(const char *name) {
   IPAddress ipaddr;
@@ -646,6 +654,7 @@ void blinkBlue() {
 }
 
 void loop() {
+	uint64_t deltaSeconds;
   uint64_t now = millis();
 #ifdef LIGHT_TEST
   lightTestCycle();
@@ -659,7 +668,7 @@ void loop() {
       startWebsocket();
     } else {
       socket.poll();
-      int deltaSeconds = (now - lastPing) / 1000;
+      deltaSeconds = (now - lastPing) / 1000;
       if (deltaSeconds > 20) {
         if (hasAuthGranted) {
           // a maybe more effective ping?
@@ -682,30 +691,35 @@ void loop() {
           if (delta > 500) {
             if (ringers[i].high) {
               ringers[i].high = false;
-              Serial.printf("ringer on go low for: %d, time past: %d milliseconds\n", i, delta);
+              //Serial.printf("ringer on go low for: %d, time past: %d milliseconds\n", i, delta);
               setOff(i);
               pixels->show();
             } else {
               ringers[i].high = true;
               setOrange(i);
               pixels->show();
-              Serial.printf("ringer on go high for: %d, time past: %d milliseconds\n", i, delta);
+              //Serial.printf("ringer on go high for: %d, time past: %d milliseconds\n", i, delta);
             }
             ringers[i].lastRing = now;
           }
         }
       }
-      deltaSeconds = (now - lastStatusCheck) / 1000;
-        
-      if (deltaSeconds > 60) {
-        refreshAllAgentStatus();
-      }
+			if (lastStatusCheck == 0) {
+				refreshAllAgentStatus();
+			} else {
+				deltaSeconds = (now - lastStatusCheck) / 1000;
+					
+				if (deltaSeconds > 60) {
+				  refreshAllAgentStatus();
+				}
+			}
     }
   }
 
   server.handleClient();
 
   // press and hold
+#ifdef HAS_BUTTON
   if (digitalRead(RESET_BUTTON) == HIGH) {
     Serial.printf("reset pressed %d of 10", resetCounter);
     resetCounter++;
@@ -721,9 +735,11 @@ void loop() {
   } else {
     resetCounter = 0;
   }
+#endif
 
   if (!IsLocalAP) {
     if (conf.ctm_user_pending) {
+			Serial.println("user pending");
       //tp.DotStar_CycleColor(25);
       int linkCheckStatusDeltaSeconds = (now - lastLinkTimerCheck) / 1000;
       if (linkTimerPending && linkCheckStatusDeltaSeconds > 5) {
@@ -767,6 +783,44 @@ void loop() {
   }
 }
 
+void handle_Style() {
+  Serial.print("GET /style.css");
+  snprintf(html_buffer, sizeof(html_buffer),
+    "{ font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}"
+      ".button { background-color: #4CAF50; border: none; color: white; padding: 16px 40px;"
+      "text-decoration: none; font-size: 30px; margin: 2px; cursor: pointer;}"
+      ".button2 {background-color: #555555;} "
+      ".logo-trigger_wrapper { display: flex;justify-content: space-between;align-items: center;height: 70px;padding-left: 15px; } "
+      ".logo-trigger_wrapper img { width: 232px; }"
+      "details summary { display: flex; justify-content: align-items: center; }"
+      "details summary::before { content: \"+\"; margin-right: 0.5rem; }"
+      "details[open] summary::before {  content: \"-\"; }"
+      "details {  display:block; border: 1px solid #ccc; padding: 0.5rem; }");
+  Serial.println("  200 OK");
+  server.send(200, "text/css", html_buffer);
+}
+
+void handle_Script() {
+  Serial.print("GET /script.js");
+  snprintf(html_buffer, sizeof(html_buffer), "$('.led-agent').select2({ "
+"  allowClear: true, minimumInputLength: 3, placeholder: \"Enter agent's name\","
+"  templateResult: (r) => { return r.text + ' ' + r.description; },"
+"  ajax: { delay: 250, url: '/agents', dataType: 'json' } "
+"});\n"
+"function hexToRgb(hex) { const result = /^#?([a-f\\d]{2})([a-f\\d]{2})([a-f\\d]{2})$/i.exec(hex); \n"
+" return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : null; \n"
+"}\n"
+"function componentToHex(c) { const hex = parseInt(c).toString(16); return hex.length == 1 ? '0' + hex : hex; }\n"
+"function rgbToHex(r, g, b) { return '#' + componentToHex(r) + componentToHex(g) + componentToHex(b); }\n"
+"$('input[type=color]').each(function() { const rgb = $(this).closest('p').find('[type=hidden]').map(function() { return this.value; }); $(this).val(rgbToHex(rgb[0], rgb[1], rgb[2])) })\n"
+"$('input[type=color]').change(function() { const v = $(this).val(); const rgb = hexToRgb(v); const a = ['r','g','b']; for (i=0;i<3;++i) { $(this).closest('p').find(`[type=hidden].${a[i]}`).val(rgb[a[i]]); } })\n"
+"$('.locate').click( function(e) { e.preventDefault(); let i = this.innerHTML.replace(/LED /,''); console.log('locate led: ', i); $.post('/locate?led=' + i); });\n"
+
+      );
+  Serial.println("  200 OK");
+  server.send(200, "text/javascript", html_buffer);
+}
+
 void handle_Main() {
   Serial.print("GET /");
   if (!conf.wifi_configured) {
@@ -796,12 +850,12 @@ void handle_Main() {
     server.send(200, "text/html", html_buffer);
     return;
   }
-  char led_opts[LED_COUNT][128];
+  char led_opts[LED_COUNT+1][256];
   int led_opt_size = 0;
 
   for (int i = 0; i < LED_COUNT; ++i) {
     //Serial.printf("led[%d]: %d -> %s\n", i, conf.leds[i], conf.agentNames[i]);
-    if (conf.leds[i] > 0) {
+    if (conf.leds[i] > 0 && conf.agentNames[i] && strlen(conf.agentNames[i]) > 0) {
       snprintf(led_opts[i], sizeof(led_opts[i]), "<option  selected='selected' value='%d'>%s</option>", conf.leds[i], conf.agentNames[i]);
     } else {
       memset(led_opts[i], 0, sizeof(led_opts[i]));
@@ -809,12 +863,14 @@ void handle_Main() {
     led_opt_size += strlen(led_opts[i]) + 1;
   }
 
+  //Serial.printf("led_opt_size: %d\n", led_opt_size);
+
   const char *markup_for_led_selector =  "<p>"
                   "<a href='#' class='locate'>LED %d</a> <select style='width:300px' class='led-agent' type='text' name='led%d'>%s</select>"
                 "</p>";
 
   int single_led_size = (strlen(markup_for_led_selector) + 32); // plus 32 for agent name 
-  int markup_led_size = (LED_COUNT * single_led_size) + led_opt_size;
+  int markup_led_size = ((LED_COUNT+1) * single_led_size) + led_opt_size;
   char *led_input_buffer = (char*)malloc(markup_led_size);
   int offset = 0;
   // append the led markup into led_input_buffer
@@ -837,6 +893,7 @@ void handle_Main() {
   for (int i = 0; i < MAX_CUSTOM_STATUS; ++i) {
     char *offsetpointer = status_input_buffer+offset;
     if (conf.custom_status_index[i] && strlen(conf.custom_status_index[i]) > 0) { // avoid writing if there are no custom statues
+      Serial.printf("custom status: %d -> %s\n", i, conf.custom_status_index[i]);
       snprintf(status_input_buffer+offset, single_status_size, markup_for_status_selector,
                conf.custom_status_index[i], conf.custom_status_index[i],
                i, conf.custom_status_color[i][0], i, conf.custom_status_color[i][1], i, conf.custom_status_color[i][2]);
@@ -847,111 +904,65 @@ void handle_Main() {
   const char *fmt_string = "<!doctype html><html>"
     "<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
     "<link rel=\"icon\" href=\"data:,\">"
-    "<link href='https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css' rel='stylesheet' "
-           "integrity='sha384-1BmE4kWBq78iYhFldvKuhfTAU6auU8tT94WrHftjDbrCEXSU1oBoqyl2QvZ6jIW3' crossorigin='anonymous'>"
-    "<link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css' "
-          "integrity='sha512-nMNlpuaDPrqlEls3IX/Q56H36qvBASwb3ipuo3MxeWbsQB1881ox0cRv7UPTgBlriqoynt35KjEwgGUeUXIPnw==' "
-          "crossorigin='anonymous' referrerpolicy='no-referrer' />"
-    "<script src='https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js' "
-            "integrity='sha512-894YE6QWD5I59HgZOGReFYm4dnWc1Qt5NtvYSaNcOP+u1T9qYdvdihz0PPSiiqn/+/3e7Jo4EaG7TubfWGUrMQ==' "
-            "crossorigin='anonymous' referrerpolicy='no-referrer'></script>"
-    "<script src='https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js' "
-            "integrity='sha384-ka7Sk0Gln4gmtz2MlQnikT1wXgYsOg+OMhuP+IlRH9sENBO0LRn5q+8nbTov4+1p' crossorigin='anonymous'></script>"
-    "<script src='https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js' "
-            "integrity='sha512-2ImtlRlf2VVmiGZsjm9bEyhjGW4dU7B6TNwh/hx/iSByxNENtj3WVE6o/9Lj4TJeVXPi4bnOIMXFIJJAeufa0A==' "
-            "crossorigin='anonymous' referrerpolicy='no-referrer'></script>"
-    "<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}"
-      ".button { background-color: #4CAF50; border: none; color: white; padding: 16px 40px;"
-      "text-decoration: none; font-size: 30px; margin: 2px; cursor: pointer;}"
-      ".button2 {background-color: #555555;} "
-      ".logo-trigger_wrapper { display: flex;justify-content: space-between;align-items: center;height: 70px;padding-left: 15px; } "
-      ".logo-trigger_wrapper img { width: 232px; }"
-    "</style>"
+    "<link href='https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css' rel='stylesheet' >"
+    "<link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css'/>"
+    "<link rel='stylesheet' href='/style.css'/>"
+    "<script src='https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js'></script>"
+    "<script src='https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js'></script>"
+    "<script src='https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js' ></script>"
     "<title>CTM Status Station</title></head>"
     "<body>"
       "<header>"
         "<div class='logo-trigger_wrapper'><img src='https://www.calltrackingmetrics.com/wp-content/themes/ctm-theme/img/ctm_logo.svg'/></div>"
         "<a href='/link_setup'>Connect Device</a>"
       "</header>"
-      "<div class='accordion' id='settings' %s>"
-        "<div class='accordion-item'>"
-          "<h2 class='accordion-header' id='headingOne'>"
-          "<button class='accordion-button collapsed' type='button' data-bs-toggle='collapse' data-bs-target='#collapseOne' aria-expanded='false' "
-          " aria-controls='collapseOne'>"
-            "Wifi Settings"
-          "</button></h2>"
-          "<div id='collapseOne' class='%s' aria-labelledby='headingOne' data-bs-parent='#settings'>"
-            "<div class='accordion-body'>"
-              "<form method='POST' action='/conf'>"
-                "<p>%s</p>"
-                "<input type='hidden' name='ssid_config' value='1'/>"
-                "<label>SSID</label><input type='text' name='ssid' value='%s'/><br/>"
-                "<label>PASS</label><input type='password' name='pass' value='%s'/><br/>"
-                "<input type='submit' value='Save'/>"
-              "</form>"
-            "</div>"
+      "<div id='settings' %s>"
+        "<details>"
+          "<summary><h3>Wifi Settings</h3></summary>"
+          "<div>"
+            "<form method='POST' action='/conf'>"
+              "<p>%s</p>"
+              "<input type='hidden' name='ssid_config' value='1'/>"
+              "<label>SSID</label><input type='text' name='ssid' value='%s'/><br/>"
+              "<label>PASS</label><input type='password' name='pass' value='%s'/><br/>"
+              "<input type='submit' value='Save'/>"
+            "</form>"
           "</div>"
-        "</div>"
-        "<div class='accordion-item'>"
-          "<h2 class='accordion-header' id='headingTwo'>"
-          "<button class='accordion-button collapsed' type='button' data-bs-toggle='collapse' data-bs-target='#collapseTwo' "
-          " aria-expanded='false' aria-controls='collapseTwo'>"
-            "Light Settings"
-          "</button></h2>"
-          "<div id='collapseTwo' class='%s' aria-labelledby='headingTwo' data-bs-parent='#settings'>"
-            "<div class='accordion-body'>"
+        "</details>"
+        "<details>"
+          "<summary><h3>Light Settings</h3></summary>"
+          "<div>"
             "<p>Each Status Station has %d LED's connected. "
-                "Assign an agent to each light. (click LED to locate)</p>"
-              "<form method='POST' action='/save_agents'>"
-              "%s"
-                "<input type='submit' value='Save'/>"
-              "</form>"
-            "</div>"
+              "Assign an agent to each light. (click LED to locate)</p>"
+            "<form method='POST' action='/save_agents'>"
+            "%s"
+              "<input type='submit' value='Save'/>"
+            "</form>"
           "</div>"
-        "</div>"
-        "<div class='accordion-item'>\n"
-          "<h2 class='accordion-header' id='heading3'>"
-          "<button class='accordion-button collapsed' type='button' data-bs-toggle='collapse' data-bs-target='#collapse3' "
-          " aria-expanded='false' aria-controls='collapse3'>"
-            "Status Settings"
-          "</button></h2>"
-          "<div id='collapse3' class='accordion-button collapsed collapse' aria-labelledby='heading3' data-bs-parent='#settings'>"
+        "</details>"
+        "<details>\n"
+          "<summary><h3>Status Settings</h3></summary>"
+          "<div>"
             "<form method='POST' action='/flip_red_green'>"
               "<input type='submit' value='Flip Red and Green'/>"
             "</form>"
-            "<div class='accordion-body'>\n"
             "<p>Assign color to each status, available is green, on a call is red, wrapup is purple.</p>"
-              "<form method='POST' action='/save_colors'>"
-                "%s"
-                "<input type='submit' value='Save'/>"
-              "</form>"
-            "</div>"
+            "<form method='POST' action='/save_colors'>"
+              "%s"
+              "<input type='submit' value='Save'/>"
+            "</form>"
           "</div>"
-        "</div>"
+        "</details>"
       "</div>"
-      "<script>"
-"      $('.led-agent').select2({ "
-"  allowClear: true, minimumInputLength: 3, placeholder: \"Enter agent's name\","
-"  templateResult: (r) => { return r.text + ' ' + r.description; },"
-"  ajax: { delay: 250, url: '/agents', dataType: 'json' } "
-"});\n"
-"function hexToRgb(hex) { const result = /^#?([a-f\\d]{2})([a-f\\d]{2})([a-f\\d]{2})$/i.exec(hex); \n"
-" return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : null; \n"
-"}\n"
-"function componentToHex(c) { const hex = parseInt(c).toString(16); return hex.length == 1 ? '0' + hex : hex; }\n"
-"function rgbToHex(r, g, b) { return '#' + componentToHex(r) + componentToHex(g) + componentToHex(b); }\n"
-"$('input[type=color]').each(function() { const rgb = $(this).closest('p').find('[type=hidden]').map(function() { return this.value; }); $(this).val(rgbToHex(rgb[0], rgb[1], rgb[2])) })\n"
-"$('input[type=color]').change(function() { const v = $(this).val(); const rgb = hexToRgb(v); const a = ['r','g','b']; for (i=0;i<3;++i) { $(this).closest('p').find(`[type=hidden].${a[i]}`).val(rgb[a[i]]); } })\n"
-"$('.locate').click( function(e) { e.preventDefault(); let i = this.innerHTML.replace(/LED /,''); console.log('locate led: ', i); $.post('/locate?led=' + i); });\n"
-      "</script>"
+      "<script src='/script.js'></script>"
     "</body></html>";
 
+  Serial.printf("write the html buffer: %d\n", sizeof(html_buffer));
   snprintf(html_buffer, sizeof(html_buffer), fmt_string, (conf.ctm_configured ? "" : "style='display:none'"),
-                      "accordion-button collapsed collapse",
                       html_error, conf.ssid, conf.pass,
-                      (conf.ctm_configured ? "accordion-collapse collapse show" : "accordion-button collapsed collapse"),
                       LED_COUNT, led_input_buffer, status_input_buffer);
 
+  Serial.printf("buffer written\n");
   free(led_input_buffer);
   free(status_input_buffer);
   Serial.printf("output size %d\n", strlen(html_buffer));
@@ -1596,6 +1607,7 @@ void refreshAccessToken() {
   }
 }
 void refreshAllAgentStatus() {
+	Serial.printf("refreshAllAgentStatus\n");
   lastStatusCheck = millis();
   String idList;
   for (int i = 0; i < LED_COUNT; ++i) {
@@ -1637,26 +1649,31 @@ void refreshAllAgentStatus() {
     setErrorAll();
   } else if (obj.containsKey("users")) {
     JsonArray users = obj["users"].as<JsonArray>();
-    for (JsonObject user : users) {
-      int ledIndex = conf.getAgentLed((int)user["uid"]);
-      if (ledIndex > -1 && ledIndex < LED_COUNT) {
-        Serial.printf("update for led: %d for user id: %d, %s\n", ledIndex, (int)user["uid"], (const char*)user["name"]);
-        if (user.containsKey("name")) {
-          Serial.printf("update name for agent: %s\n", (const char*)user["name"]);
-          snprintf(conf.agentNames[ledIndex], 32, "%s", (const char*)user["name"]);
-        }
 
-        if (user.containsKey("status") && user["status"]) {
-          Serial.printf("got status: %s for led %d\n", (const char*)user["status"], ledIndex);
-          updateAgentStatusLed(ledIndex, user["status"]);
-        } else if (user.containsKey("videos") && user["videos"] > 0) {
-          updateAgentStatusLed(ledIndex, "inbound"); // active video treat like on a video 
-        } else {
-          Serial.printf("no status mark offline\n");
-          updateAgentStatusLed(ledIndex, "offline");
-        }
-      }
-    }
+		if (users.size() > 0) {
+
+			for (JsonObject user : users) {
+				int ledIndex = conf.getAgentLed((int)user["uid"]);
+				if (ledIndex > -1 && ledIndex < LED_COUNT) {
+					Serial.printf("update for led: %d for user id: %d, %s\n", ledIndex, (int)user["uid"], (const char*)user["name"]);
+					if (user.containsKey("name")) {
+						Serial.printf("update name for agent: %s\n", (const char*)user["name"]);
+						snprintf(conf.agentNames[ledIndex], 32, "%s", (const char*)user["name"]);
+					}
+
+					if (user.containsKey("status") && user["status"]) {
+						Serial.printf("got status: %s for led %d\n", (const char*)user["status"], ledIndex);
+						updateAgentStatusLed(ledIndex, user["status"]);
+					} else if (user.containsKey("videos") && user["videos"] > 0) {
+						updateAgentStatusLed(ledIndex, "inbound"); // active video treat like on a video 
+					} else {
+						Serial.printf("no status mark offline\n");
+						updateAgentStatusLed(ledIndex, "offline");
+					}
+				}
+			}
+
+		}
     // save any updates to names
     conf.save();
   } else if (obj.containsKey("authentication")) {
@@ -1692,12 +1709,16 @@ void fetchCustomStatus() {
     return;
   }
   JsonObject obj = doc.as<JsonObject>();
+  // zero out the custom_status_index buffer
+  for (int i = 0; i < MAX_CUSTOM_STATUS; ++i) {
+    memset(conf.custom_status_index[i], 0, 31);
+  }
   if (obj.containsKey("statuses")) {
     JsonArray statuses = obj["statuses"].as<JsonArray>();
     int i = 0;
     for (JsonObject status : statuses) {
-      Serial.printf("status: %s, normalized to: %s\n", (const char*)status["name"], (const char*)status["id"]);
-      snprintf(conf.custom_status_index[i++], 32, "%s", (const char*)status["id"]);
+      Serial.printf("status[%d]: %s, normalized to: %s\n", i, (const char*)status["name"], (const char*)status["id"]);
+      snprintf(conf.custom_status_index[i++], 31, "%s", (const char*)status["id"]);
     }
     conf.save();
   }
