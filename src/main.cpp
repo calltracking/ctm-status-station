@@ -378,7 +378,8 @@ void setup() {
     }
   }
 #ifdef HAS_BUTTON
-  pinMode(RESET_BUTTON, INPUT_PULLDOWN);
+  pinMode(RESET_BUTTON, INPUT);
+  Serial.println("button setup");
 #endif
 
   pixels = new Adafruit_NeoPixel(LED_COUNT, STATUS_LIGHT_OUT, NEO_GRB + NEO_KHZ800);
@@ -720,7 +721,8 @@ void loop() {
 
   // press and hold
 #ifdef HAS_BUTTON
-  if (digitalRead(RESET_BUTTON) == HIGH) {
+  int value = digitalRead(RESET_BUTTON);
+  if (value == HIGH) {
     Serial.printf("reset pressed %d of 10", resetCounter);
     resetCounter++;
     delay(1000);
