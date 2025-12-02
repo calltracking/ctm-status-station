@@ -184,6 +184,12 @@ const byte DNS_PORT = 53;
 
 
 bool IsLocalAP = true;
+bool apActive = false; // true while softAP is running
+bool staConnectInProgress = false;
+bool staConnectFailed = false;
+uint64_t staConnectStart = 0;
+uint64_t apGraceStart = 0;
+const uint64_t AP_GRACE_MS = 12000; // keep AP alive after STA connect so UI can redirect
 Adafruit_NeoPixel *pixels;
 bool hasSocketConnected = false;
 
@@ -210,6 +216,7 @@ void handle_Unlink();
 void handle_Linked();
 void handle_AgentLookup();
 void handle_CaptivePortal();
+void handle_IpStatus();
 void handle_SaveAgents();
 void handle_SaveColors();
 void handle_LocateLED();
@@ -446,6 +453,7 @@ void setup() {
       WiFi.softAP(default_ssid, default_pass, 12, false, 8);
       DeviceIP = WiFi.softAPIP();
       IsLocalAP = true;
+      apActive = true;
       Serial.print("AP IP address: ");
       Serial.println(DeviceIP);
     }
@@ -462,6 +470,7 @@ void setup() {
     DeviceIP = WiFi.softAPIP();
 
     IsLocalAP = true;
+    apActive = true;
     Serial.print("IP address: ");
     Serial.println(DeviceIP);
 
@@ -492,6 +501,7 @@ void setup() {
   server.on("/save_colors", HTTP_POST, handle_SaveColors);
   server.on("/locate", HTTP_POST, handle_LocateLED);
   server.on("/flip_red_green", HTTP_POST, handle_FlipRedGreen);
+  server.on("/ip_status", HTTP_GET, handle_IpStatus);
   server.on("/generate_204", HTTP_GET, handle_CaptivePortal); // Android/Chrome captive portal trigger
   server.on("/gen_204", HTTP_GET, handle_CaptivePortal);
   server.on("/hotspot-detect.html", HTTP_GET, handle_CaptivePortal); // Apple captive portal trigger
@@ -504,7 +514,7 @@ void setup() {
   delay(1000);
   Serial.printf("server started with %d LED's\n", LED_COUNT);
 
-  if (IsLocalAP) {
+  if (apActive) {
     // wildcard DNS to force all hosts to our captive portal page
     dnsServer.start(DNS_PORT, "*", DeviceIP);
   }
@@ -690,6 +700,43 @@ void loop() {
   lightTestCycle();
   return;
 #endif
+
+  bool staConnected = (WiFi.status() == WL_CONNECTED) && (WiFi.localIP() != (uint32_t)0);
+
+  if (staConnectInProgress) {
+    if (staConnected) {
+      staConnectInProgress = false;
+      staConnectFailed = false;
+      WiFi.setSleep(WIFI_PS_NONE);
+      DeviceIP = WiFi.localIP();
+      IsLocalAP = false;
+      apGraceStart = now;
+      Serial.print("STA connected during config. IP: ");
+      Serial.println(DeviceIP);
+      red_green_flipped = conf.red_green_flipped;
+      setGreenAll();
+    } else if ((now - staConnectStart) > 20000) {
+      staConnectInProgress = false;
+      staConnectFailed = true;
+      setRedAll();
+      Serial.println("STA connect timeout; staying in AP mode for reconfig");
+      conf.wifi_configured = false;
+      conf.save();
+      WiFi.disconnect(true);
+      WiFi.mode(WIFI_AP);
+      apActive = true;
+      IsLocalAP = true;
+      DeviceIP = WiFi.softAPIP();
+      dnsServer.start(DNS_PORT, "*", DeviceIP);
+    }
+  }
+
+  if (apActive && !IsLocalAP && apGraceStart > 0 && (now - apGraceStart) > AP_GRACE_MS) {
+    Serial.println("Grace period over, stopping AP");
+    WiFi.softAPdisconnect(true);
+    dnsServer.stop();
+    apActive = false;
+  }
   if (conf.ctm_configured && conf.wifi_configured && conf.account_id > 0) {
     if (socketClosed || !hasSocketConnected) { 
       delay(1000);
@@ -746,7 +793,7 @@ void loop() {
     }
   }
 
-  if (IsLocalAP) {
+  if (apActive) {
     dnsServer.processNextRequest();
   }
 
@@ -1008,20 +1055,42 @@ void handle_Main() {
 
 void handle_Conf() {
 
-  server.sendHeader("Location","/");
-  server.send(303);
-
   if (server.hasArg("ssid_config")) {
     // configuring the wifi
     if (server.hasArg("ssid") && server.hasArg("pass") && server.arg("ssid") != NULL && server.arg("pass") != NULL) {
-      // save updated settings and restart the wifi
+      // save updated settings and start STA while keeping AP alive briefly
+      memset(conf.ssid, 0, sizeof(conf.ssid));
+      memset(conf.pass, 0, sizeof(conf.pass));
       memcpy(conf.ssid, server.arg("ssid").c_str(), 32);
       memcpy(conf.pass, server.arg("pass").c_str(), 32);
       conf.wifi_configured = true;
       conf.save();
-      Serial.println("Saved user settings... rebooting");
-      delay(2000);
-      ESP.restart();
+      Serial.println("Saved user settings... connecting STA while keeping AP up");
+
+      staConnectFailed = false;
+      WiFi.mode(WIFI_AP_STA);
+      apActive = true; // keep captive portal alive during transition
+      WiFi.begin(conf.ssid, conf.pass);
+      staConnectInProgress = true;
+      staConnectStart = millis();
+
+      snprintf(html_buffer, sizeof(html_buffer),
+        "<!doctype html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>Connecting...</title></head>"
+        "<body style='font-family:Helvetica;text-align:center'>"
+        "<h2>Connecting to %s</h2>"
+        "<p>Stay on this page. We'll redirect once the station is online.</p>"
+        "<p id='status'>Attempting connection...</p>"
+        "<script>\n"
+        "function poll(){fetch('/ip_status').then(r=>r.json()).then(d=>{\n"
+        " if(d.connected){document.getElementById('status').innerText='Connected! Redirecting...';\n"
+        "   setTimeout(()=>{window.location='http://'+d.ip+'/';},2000);\n"
+        " } else if(d.failed){document.getElementById('status').innerText='Connection failed. Stay on the ctmlight network to reconfigure.';}\n"
+        " else {document.getElementById('status').innerText='Connecting...'; setTimeout(poll,1000);}\n"
+        "}).catch(()=>setTimeout(poll,1500));}\n"
+        "setTimeout(poll,800);\n"
+        "</script></body></html>", conf.ssid);
+      server.send(200, "text/html", html_buffer);
+      return;
     } else {
       // display a configuration error
       snprintf(html_error, sizeof(html_error), "Missing ssid or pass");
@@ -1029,6 +1098,9 @@ void handle_Conf() {
       return;
     }
   }
+
+  server.sendHeader("Location","/");
+  server.send(303);
 }
 
 void handle_LinkStatus() {
@@ -1343,6 +1415,20 @@ void handle_CaptivePortal() {
   server.send(204, "text/plain", "");
 }
 
+// Report current network state so the captive portal page can redirect to the STA IP
+void handle_IpStatus() {
+  IPAddress staIp = WiFi.localIP();
+  IPAddress apIp = WiFi.softAPIP();
+  bool connected = WiFi.status() == WL_CONNECTED && staIp != (uint32_t)0;
+  snprintf(html_buffer, sizeof(html_buffer),
+           "{\"connected\":%s,\"ip\":\"%s\",\"ap\":\"%s\",\"failed\":%s}",
+           connected ? "true" : "false",
+           staIp.toString().c_str(),
+           apIp.toString().c_str(),
+           staConnectFailed ? "true" : "false");
+  server.send(200, "application/json", html_buffer);
+}
+
 void handleNotFound() {
   if (IsLocalAP && !conf.wifi_configured) {
     // force captive portal browsers back to root
@@ -1641,20 +1727,15 @@ void refreshAccessToken() {
     //tp.DotStar_Clear();
     //tp.DotStar_SetPixelColor(0, 255, 0);
   } else {
-    Serial.println("something is really messed up reset and turn lights red and wait here....");
-    //tp.DotStar_Clear();
-    //tp.DotStar_SetPixelColor(255, 0, 0);
+    Serial.println("refresh failed; clearing tokens and waiting for re-link");
     setRedAll();
-    conf.resetWifi();
+    memset(conf.access_token, 0, sizeof(conf.access_token));
+    memset(conf.refresh_token, 0, sizeof(conf.refresh_token));
+    memset(conf.device_code, 0, sizeof(conf.device_code));
     conf.ctm_configured = false;
+    conf.ctm_user_pending = false;
     conf.save();
-    while(1) {
-      delay(1000);
-      setOffAll();
-      Serial.println("something is really messed up reset and turn lights red and wait here....");
-      delay(1000);
-      setRedAll();
-    }
+    linkError = true;
   }
 }
 void refreshAllAgentStatus() {
