@@ -954,7 +954,7 @@ void handle_Main() {
 
   int single_led_size = (strlen(markup_for_led_selector) + 32); // plus 32 for agent name 
   int markup_led_size = ((LED_COUNT+1) * single_led_size) + led_opt_size;
-  char *led_input_buffer = (char*)malloc(markup_led_size);
+  char *led_input_buffer = (char*)calloc(markup_led_size, 1);
   int offset = 0;
   // append the led markup into led_input_buffer
   for (int i = 0; i < LED_COUNT; ++i) {// <option  selected='selected' value='%d'>%s</option>
@@ -971,7 +971,7 @@ void handle_Main() {
                 "</p>";
   int single_status_size = (strlen(markup_for_status_selector) + 96); // 96 for status name 2x and color value
   int markup_status_size = (MAX_CUSTOM_STATUS * single_status_size);
-  char *status_input_buffer = (char*)malloc(markup_status_size);
+  char *status_input_buffer = (char*)calloc(markup_status_size, 1); // ensure empty string when no statuses
   offset = 0;
   for (int i = 0; i < MAX_CUSTOM_STATUS; ++i) {
     char *offsetpointer = status_input_buffer+offset;
@@ -1238,18 +1238,20 @@ void checkTokenStatus() {
       Serial.println("link success!");
       linkError = false;
       conf.account_id = (int)obj["account_id"];
-      int atlen = strlen((const char *)obj["access_token"]);
-      if (atlen > 128) {
+      size_t atlen = strlen((const char *)obj["access_token"]);
+      if (atlen >= sizeof(conf.access_token)) {
         Serial.println("error access token overflow!");
+        atlen = sizeof(conf.access_token) - 1;
       }
-      memset(conf.access_token, '\0', 128);
-      memset(conf.refresh_token, '\0', 128);
-      memcpy(conf.access_token, (const char *)obj["access_token"], atlen < 128 ? atlen : 128);
-      int rtlen = strlen((const char *)obj["refresh_token"]);
-      if (rtlen > 128) {
+      size_t rtlen = strlen((const char *)obj["refresh_token"]);
+      if (rtlen >= sizeof(conf.refresh_token)) {
         Serial.println("error refresh token overflow!");
+        rtlen = sizeof(conf.refresh_token) - 1;
       }
-      memcpy(conf.refresh_token, (const char *)obj["refresh_token"], rtlen < 128 ? rtlen : 128);
+      memset(conf.access_token, 0, sizeof(conf.access_token));
+      memset(conf.refresh_token, 0, sizeof(conf.refresh_token));
+      strncpy(conf.access_token, (const char *)obj["access_token"], atlen);
+      strncpy(conf.refresh_token, (const char *)obj["refresh_token"], rtlen);
       conf.ctm_user_pending = false;
       conf.ctm_configured = true;
       conf.user_id = (int)obj["user_id"];
@@ -1754,6 +1756,11 @@ void refreshAllAgentStatus() {
         idList = conf.leds[i];
       }
     }
+  }
+
+  if (idList.length() == 0) {
+    Serial.println("no agents assigned; skip status fetch");
+    return;
   }
 
   Serial.printf("fetching status for agents\n");

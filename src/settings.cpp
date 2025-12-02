@@ -31,7 +31,7 @@ void Settings::reset() {
   memset(this->access_token, 0, sizeof(this->access_token));
   memset(this->refresh_token, 0, sizeof(this->refresh_token));
   memset(this->device_code, 0, 64);
-  memset(this->leds, 0, LED_COUNT);
+  memset(this->leds, 0, sizeof(this->leds));
   for (int i = 0; i < LED_COUNT; ++i) {
     memset(this->agentNames[i], 0, 32);
   }
