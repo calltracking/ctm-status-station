@@ -1,6 +1,6 @@
 ROOT_DIR:=$(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
 
-all: wroom_s3
+all: tinypico#wroom_s3
 
 wroom_s3:
 	pio run -e s3wroom_1 -j 2 --target upload

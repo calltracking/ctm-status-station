@@ -16,6 +16,7 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <Wire.h>
+#include <DNSServer.h>
 #include <ArduinoJson.h> // see: https://arduinojson.org/v6/api/jsonobject/containskey/
 #include <ArduinoWebsockets.h>
 #include <Adafruit_NeoPixel.h>
@@ -178,6 +179,8 @@ IPAddress DeviceIP;
 const unsigned long WIFIReConnectInteval = 30000;
 unsigned long previousWifiMillis = 0;
 WebServer server(80);
+DNSServer dnsServer;
+const byte DNS_PORT = 53;
 
 
 bool IsLocalAP = true;
@@ -206,6 +209,7 @@ void handle_Link();
 void handle_Unlink();
 void handle_Linked();
 void handle_AgentLookup();
+void handle_CaptivePortal();
 void handle_SaveAgents();
 void handle_SaveColors();
 void handle_LocateLED();
@@ -396,42 +400,57 @@ void setup() {
 #endif
 
   if (conf.good() && conf.wifi_configured && strlen(conf.ssid) > 0) {
-    Serial.print("Connecting to network...");
+    bool wifiConnected = false;
+    for (int attempt = 1; attempt <= 2; ++attempt) {
+      Serial.printf("Connecting to network (attempt %d)...\n", attempt);
+      WiFi.begin(conf.ssid, conf.pass);
+      if (WiFi.waitForConnectResult() == WL_CONNECTED) {
+        wifiConnected = true;
+        setGreenAll();
+        break;
+      }
 
-    WiFi.begin(conf.ssid, conf.pass);
-    if (WiFi.waitForConnectResult() != WL_CONNECTED) {
 #ifdef HAS_DISPLAY
-  display.clearBuffer();
-  testdrawtext("WiFi Connection Failed", COLOR1, 0);
-  display.display();
+      display.clearBuffer();
+      testdrawtext("WiFi Connection Failed", COLOR1, 0);
+      display.display();
 #endif
       Serial.println("Connection Failed!");
       setRedAll();
-      delay(2000);
-      Serial.println("Reset SSID...");
-      //conf.resetWifi();
-      //conf.save();
-      delay(2000);
-      Serial.println("Rebooting...");
-      delay(1000);
-      ESP.restart();
-    } else {
-      Serial.println("Connected!");
+      delay(1200);
+      setOffAll();
+      delay(400);
+      WiFi.disconnect(true);
+      delay(300);
     }
-    // this has a dramatic effect on packet RTT
-    WiFi.setSleep(WIFI_PS_NONE);
-    DeviceIP = WiFi.localIP();
-    IsLocalAP = false;
-    Serial.print("IP address: ");
-    Serial.println(DeviceIP);
+
+    if (wifiConnected) {
+      // this has a dramatic effect on packet RTT
+      WiFi.setSleep(WIFI_PS_NONE);
+      DeviceIP = WiFi.localIP();
+      IsLocalAP = false;
+      Serial.print("Connected! IP address: ");
+      Serial.println(DeviceIP);
 #ifdef HAS_DISPLAY
-    display.clearBuffer();
-    testdrawtext("Network Connected", COLOR1, 0);
-    testdrawtext((String("Configure at IP: ") + DeviceIP.toString()).c_str(), COLOR1, 3);
-    display.display();
+      display.clearBuffer();
+      testdrawtext("Network Connected", COLOR1, 0);
+      testdrawtext((String("Configure at IP: ") + DeviceIP.toString()).c_str(), COLOR1, 3);
+      display.display();
 #endif
+    } else {
+      Serial.println("Failed to connect after retries. Enabling setup AP.");
+      conf.wifi_configured = false; // show config form again, keep entered SSID/pass for convenience
+      conf.save();
+      WiFi.mode(WIFI_AP);
+      WiFi.softAPmacAddress();
+      WiFi.softAP(default_ssid, default_pass, 12, false, 8);
+      DeviceIP = WiFi.softAPIP();
+      IsLocalAP = true;
+      Serial.print("AP IP address: ");
+      Serial.println(DeviceIP);
+    }
   } else {
-    conf.resetWifi();
+    conf.wifi_configured = false;
     conf.ctm_user_pending = false;
     conf.save();
 
@@ -473,12 +492,22 @@ void setup() {
   server.on("/save_colors", HTTP_POST, handle_SaveColors);
   server.on("/locate", HTTP_POST, handle_LocateLED);
   server.on("/flip_red_green", HTTP_POST, handle_FlipRedGreen);
+  server.on("/generate_204", HTTP_GET, handle_CaptivePortal); // Android/Chrome captive portal trigger
+  server.on("/gen_204", HTTP_GET, handle_CaptivePortal);
+  server.on("/hotspot-detect.html", HTTP_GET, handle_CaptivePortal); // Apple captive portal trigger
+  server.on("/ncsi.txt", HTTP_GET, handle_CaptivePortal); // Windows captive portal trigger
+  server.on("/connecttest.txt", HTTP_GET, handle_CaptivePortal);
   server.onNotFound(handleNotFound);
   Serial.println("start the web server");
 
   server.begin();
   delay(1000);
   Serial.printf("server started with %d LED's\n", LED_COUNT);
+
+  if (IsLocalAP) {
+    // wildcard DNS to force all hosts to our captive portal page
+    dnsServer.start(DNS_PORT, "*", DeviceIP);
+  }
 
   Serial.println("setup complete");
     
@@ -715,6 +744,10 @@ void loop() {
 				}
 			}
     }
+  }
+
+  if (IsLocalAP) {
+    dnsServer.processNextRequest();
   }
 
   server.handleClient();
@@ -1300,7 +1333,23 @@ void handle_AgentLookup() {
   }
 }
 
+// Send a redirect back to the local setup page for captive portal probes
+void handle_CaptivePortal() {
+  if (IsLocalAP && !conf.wifi_configured) {
+    server.sendHeader("Location", String("http://") + DeviceIP.toString());
+    server.send(302, "text/plain", "Redirecting to setup...");
+    return;
+  }
+  server.send(204, "text/plain", "");
+}
+
 void handleNotFound() {
+  if (IsLocalAP && !conf.wifi_configured) {
+    // force captive portal browsers back to root
+    server.sendHeader("Location", String("http://") + DeviceIP.toString());
+    server.send(302, "text/plain", "Redirecting to setup...");
+    return;
+  }
   server.send(404, "text/plain", "404: Not found"); // Send HTTP status 404 (Not Found) when there's no handler for the URI in the request
 }
 void updateAgentStatusLed(int ledIndex, const String status) {
