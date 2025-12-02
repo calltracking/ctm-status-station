@@ -17,6 +17,7 @@
 #include <HTTPClient.h>
 #include <Wire.h>
 #include <DNSServer.h>
+#include <cstring>
 #include <ArduinoJson.h> // see: https://arduinojson.org/v6/api/jsonobject/containskey/
 #include <ArduinoWebsockets.h>
 #include <Adafruit_NeoPixel.h>
@@ -1061,8 +1062,8 @@ void handle_Conf() {
       // save updated settings and start STA while keeping AP alive briefly
       memset(conf.ssid, 0, sizeof(conf.ssid));
       memset(conf.pass, 0, sizeof(conf.pass));
-      memcpy(conf.ssid, server.arg("ssid").c_str(), 32);
-      memcpy(conf.pass, server.arg("pass").c_str(), 32);
+      strncpy(conf.ssid, server.arg("ssid").c_str(), sizeof(conf.ssid) - 1);
+      strncpy(conf.pass, server.arg("pass").c_str(), sizeof(conf.pass) - 1);
       conf.wifi_configured = true;
       conf.save();
       Serial.println("Saved user settings... connecting STA while keeping AP up");
@@ -1184,7 +1185,8 @@ void handle_Link() {
     "</html>", (char*)((const char*)obj["user_code"]), (char*)((const char*)obj["verification_uri"]));
   server.send(200, "text/html", html_buffer);
 
-  memcpy(conf.device_code, (const char*)obj["device_code"], sizeof(conf.device_code)); 
+  memset(conf.device_code, 0, sizeof(conf.device_code));
+  strncpy(conf.device_code, (const char*)obj["device_code"], sizeof(conf.device_code) - 1);
   conf.ctm_user_pending = true;
   conf.save();
   linkTimerPending = true;
@@ -1717,8 +1719,10 @@ void refreshAccessToken() {
     Serial.println("refresh success!");
     linkError = false;
     conf.account_id = (int)obj["account_id"];
-    memcpy(conf.access_token, (const char *)obj["access_token"], strlen((const char *)obj["access_token"]));
-    memcpy(conf.refresh_token, (const char *)obj["refresh_token"], strlen((const char *)obj["refresh_token"]));
+    memset(conf.access_token, 0, sizeof(conf.access_token));
+    memset(conf.refresh_token, 0, sizeof(conf.refresh_token));
+    strncpy(conf.access_token, (const char *)obj["access_token"], sizeof(conf.access_token) - 1);
+    strncpy(conf.refresh_token, (const char *)obj["refresh_token"], sizeof(conf.refresh_token) - 1);
     conf.ctm_user_pending = false;
     conf.ctm_configured = true;
     conf.user_id = (int)obj["user_id"];

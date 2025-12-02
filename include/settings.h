@@ -25,8 +25,8 @@ struct Settings {
   bool hasAgent(int id);
   int getAgentLed(int id);
 
-  char ssid[32]; // wifi ssid
-  char pass[32]; // password ssid
+  char ssid[64]; // wifi ssid (supports full 32-byte SSID plus terminator)
+  char pass[64]; // password ssid (WPA2 up to 63 chars + terminator)
 
   unsigned int account_id;
   unsigned int team_id; // TODO

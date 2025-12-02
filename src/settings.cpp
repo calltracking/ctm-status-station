@@ -26,10 +26,10 @@ void Settings::reset() {
   this->red_green_flipped = false;
   this->ctm_configured = false;
   this->wifi_configured = false;
-  memset(this->ssid, 0, 32);
-  memset(this->pass, 0, 32);
-  memset(this->access_token, 0, 64);
-  memset(this->refresh_token, 0, 64);
+  memset(this->ssid, 0, sizeof(this->ssid));
+  memset(this->pass, 0, sizeof(this->pass));
+  memset(this->access_token, 0, sizeof(this->access_token));
+  memset(this->refresh_token, 0, sizeof(this->refresh_token));
   memset(this->device_code, 0, 64);
   memset(this->leds, 0, LED_COUNT);
   for (int i = 0; i < LED_COUNT; ++i) {
@@ -53,8 +53,8 @@ void Settings::resetWifi() {
   Serial.println("resetWifi");
   delay(1000);
   this->wifi_configured = false;
-  memset(this->ssid, 0, 32);
-  memset(this->pass, 0, 32);
+  memset(this->ssid, 0, sizeof(this->ssid));
+  memset(this->pass, 0, sizeof(this->pass));
 }
 
 void Settings::resetAgentLeds() {
@@ -113,11 +113,11 @@ bool Settings::good() {
 }
 
 uint32_t Settings::crc32() {
-  uint8_t data[64];
-  memcpy(data, ssid, 32);
-  memcpy(data+32, pass, 32);
+  uint8_t data[128];
+  memcpy(data, ssid, 64);
+  memcpy(data+64, pass, 64);
 
   Arduino_CRC32 crc32;
 
-  return crc32.calc(data, 64);
+  return crc32.calc(data, 128);
 }
