@@ -157,9 +157,9 @@ bool linkPending = false;
 bool linkError = false;
 bool linkTimerPending = false; // waiting for token device code
 short resetCounter = 0;
-uint64_t lastLinkTimerCheck = 0;
-uint64_t lastPing = 0;
-uint64_t lastStatusCheck = 0;
+uint32_t lastLinkTimerCheck = 0;
+uint32_t lastPing = 0;
+uint32_t lastStatusCheck = 0;
 int LocateLED = -1;
 int locateCycles = 0;
 JsonDocument doc;
@@ -169,7 +169,7 @@ bool hasAuthGranted = false;
 typedef struct _Ringer {
   bool on;
   bool high;
-  uint64_t lastRing;
+  uint32_t lastRing;
 } Ringer;
 #define RINGERS LED_COUNT
 Ringer ringers[RINGERS+1]; // set of led's to blink for ringing
@@ -594,6 +594,7 @@ void startWebsocket() {
     } else {
       Serial.println("connected to socket server");
       hasSocketConnected = true;
+      lastPing = millis();
     }
 
     setOffAll();
@@ -695,8 +696,8 @@ void blinkBlue() {
 }
 
 void loop() {
-	uint64_t deltaSeconds;
-  uint64_t now = millis();
+	uint32_t deltaSeconds;
+  uint32_t now = millis();
 #ifdef LIGHT_TEST
   lightTestCycle();
   return;
@@ -764,7 +765,7 @@ void loop() {
       // handle ringers
       for (int i = 0; i < RINGERS; ++i) {
         if (ringers[i].on) {
-          int delta = (now - ringers[i].lastRing);
+          uint32_t delta = (uint32_t)(now - ringers[i].lastRing);
           //Serial.printf("ringer on for: %d, time past: %d seconds\n", i, delta);
           if (delta > 500) {
             if (ringers[i].high) {
@@ -824,7 +825,7 @@ void loop() {
     if (conf.ctm_user_pending) {
 			Serial.println("user pending");
       //tp.DotStar_CycleColor(25);
-      int linkCheckStatusDeltaSeconds = (now - lastLinkTimerCheck) / 1000;
+      uint32_t linkCheckStatusDeltaSeconds = (uint32_t)(now - lastLinkTimerCheck) / 1000;
       if (linkTimerPending && linkCheckStatusDeltaSeconds > 5) {
         blinkGreen();
         lastLinkTimerCheck = now;
@@ -1496,16 +1497,16 @@ void socketMessage(websockets::WebsocketsMessage message) {
   //Serial.println(data);
 
   if (data == "42[\"access.handshake\"]") {
-    doc["id"] = conf.user_id;
-    doc["account"] = conf.account_id;
-    doc["captoken"] = captoken;
-    char json_string[1024];
-    serializeJson(doc, json_string);
+    DynamicJsonDocument reply(512);
+    reply["id"] = conf.user_id;
+    reply["account"] = conf.account_id;
+    reply["captoken"] = captoken;
 
-    snprintf(html_buffer, sizeof(html_buffer), "42[\"access.account\", %s]", json_string);
-    Serial.printf("reply to access.handshake: %s\n", html_buffer);
-    socket.send(html_buffer);
-    //socket.send(String("40"));
+    String payload;
+    serializeJson(reply, payload);
+    String frame = String("42[\"access.account\", ") + payload + "]";
+    Serial.printf("reply to access.handshake: %s\n", frame.c_str());
+    socket.send(frame);
     socket.ping();
     lastPing = millis();
     // 42["auth.granted",{"account":18614}]
