@@ -1,51 +1,56 @@
 # CTM Status Station
 
-The goal this project is to make it easy to have light in a room that helps people in the area know when someone is on a phone call.
+Small ESP32 light bar that shows agent call status from CallTrackingMetrics.
 
-We'll subscribe to incoming phone calls and active call events and change the light color to make this obvious
+## What it does
+- Broadcasts its own setup AP on first boot so you can enter Wi‑Fi.
+- Lets you link the device to a CTM account via the built-in web UI.
+- Listens for ringing/active calls over WebSocket and updates LEDs.
 
+## Hardware
+- Tested on TinyPICO / ESP32-S3 dev kits with NeoPixel strip (8 LEDs by default).
+- One button: BOOT/RESET. On TinyPICO it hard-resets the board; use the web “Factory Reset” instead.
 
-## Setup
+## Quick start (first-time setup)
+1) Power the device. It starts a hotspot:
+   - ssid: `ctmlight`
+   - pass: `ctmstatus`
+2) Connect to the hotspot. A captive portal should pop up; if it doesn’t, open `http://192.168.4.1/` manually.
+3) Enter your Wi‑Fi SSID and password. The device reboots and joins your network (LEDs blink green once connected).
+4) Find its LAN IP (router/DHCP list or `http://ctmlight.local` if mDNS works) and open `http://<device-ip>/`.
+5) Click **Connect Device** to start linking. You’ll get a code and a link to `https://app.calltrackingmetrics.com/accesscode`.
+6) Approve the device in CTM. The page polls automatically; once linked the device reboots and starts listening.
 
-Before the device is configured it will expose an access point: 
-  ssid: ctmlight
-  pass: ctmstatus
+## Relinking / factory reset
+- From the UI: click **Factory Reset** (on the main page or `/link_setup`) to clear Wi‑Fi and CTM link, then the device reboots back to the `ctmlight` AP.
+- If you’re still linked and you reopen `/link`, it will tell you the device is already linked and offer **Unlink Device**.
 
-After connecting navigate browser to
+## Build & flash
+Prereqs: PlatformIO (`pio`), Python, USB cable.
 
-http://192.168.4.1/
-
-From the web interface configure your networks ssid and password
-
-Once the device joins your network it'll blink green
-
-You'll have to find the device now on your network
-
-http://your-device-ip/
-
-From here you can click connect and you'll be taken to a page on https://app.calltrackingmetrics give access to the device and you should 
-next be presented with some options to choose a specific team or your whole account.
-
-
-openssl x509 -inform der -in ~/Desktop/ISRG\ Root\ X1.cer -out ~/Desktop/ISRG_ROOT_X1.pem
-
-
-# Development 
-
-When building with CTM_PRODUCTION undefined you must provide a app server address e.g.
-
-Get a clientid from your app https://app.ctmdev.us/oauth_apps/
-
+Common targets (default `make` builds/uploads TinyPICO):
 ```
-  CTM_SOC_HOST=<nic.ngrok.io CTM_API_HOST=<nic>.ngrok.io CTM_APP_HOST=<nic>.ngrok.io CTM_CLIENTID=aJOX4QK_QzADcxVG_ZVY2tCB1KgqffXpKuJUEQbcr48 make upload
+make                         # TinyPICO: build, upload, then serial monitor
+pio run -e tinypico          # build only TinyPICO
+pio run -e s3wroom_1         # build only ESP32-S3 devkit
+make wroom_s3                # ESP32-S3: build + upload
+pio device monitor -b 115200 # serial monitor (921600 for s3wroom_1)
+make clean                   # cleanup
 ```
 
-# Ethernet
-Ethernet libraries are more involved then wifi so we need a few extra things so far I believe   OPEnSLab-OSU/SSLClient is going to make this doable but it has a slightly
-different format for PEMs then ESP32 wifi client
+## Development / tunnels
+When `CTM_PRODUCTION` is undefined (staging/tunnel), provide hosts and client id:
+```
+CTM_SOC_HOST=<ngrok>.ngrok.io \
+CTM_API_HOST=<ngrok>.ngrok.io \
+CTM_APP_HOST=<ngrok>.ngrok.io \
+CTM_CLIENTID=<client_id> \
+make tinypico
+```
+Get a client id from https://app.ctmdev.us/oauth_apps/.
 
-The follow python from: https://github.com/OPEnSLab-OSU/SSLClient/tree/master/tools/pycert_bearssl
-Can be used to grab our pem file and generate the include/certs.h file
+## Ethernet (experimental)
+ESP32 Ethernet needs different PEM handling. Use the helper from OPEnSLab-OSU/SSLClient to generate BearSSL certs:
 ```
 python3 pycert_bearssl.py download app.calltrackingmetrics.com --output include/certs.h
 ```
