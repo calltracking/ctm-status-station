@@ -47,7 +47,7 @@ CTM_APP_HOST=<ngrok>.ngrok.io \
 CTM_CLIENTID=<client_id> \
 make tinypico
 ```
-Get a client id from https://app.ctmdev.us/oauth_apps/.
+Get a client id from https://app.calltrackingmetrics.com/oauth_apps/.
 
 ## Ethernet (experimental)
 ESP32 Ethernet needs different PEM handling. Use the helper from OPEnSLab-OSU/SSLClient to generate BearSSL certs:
