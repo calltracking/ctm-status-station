@@ -1,4 +1,5 @@
 ROOT_DIR:=$(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
+PLATFORMIO_CORE_DIR ?= $(ROOT_DIR)/.pio
 
 all: tinypico#wroom_s3
 
@@ -28,3 +29,8 @@ monitor:
 
 clean:
 	pio run --target clean
+
+test:
+	PLATFORMIO_CORE_DIR=$(PLATFORMIO_CORE_DIR) pio test -e native
+
+.PHONY: all wroom_s3 tinypico tinypico_status tinys3 tinys3_status pico pico_status monitor clean test
