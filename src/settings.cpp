@@ -1,4 +1,6 @@
 #include <Arduino_CRC32.h>
+#include <cstring>
+#include <cctype>
 #include "settings.h"
 
 template <class T> unsigned int EEPROM_write(int ee, const T& value) {
