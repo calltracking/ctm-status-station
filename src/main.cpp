@@ -57,7 +57,13 @@ ThinkInk_213_Mono_B72 display(EPD_DC, EPD_RESET, EPD_CS, SRAM_CS, EPD_BUSY);
 
 #endif
 
+#ifdef TINYPICO_PINS
+#define RESET_BUTTON 0           // TinyPICO BOOT button
+#define RESET_BUTTON_ACTIVE LOW  // active-low (pulled up)
+#else
 #define RESET_BUTTON 27
+#define RESET_BUTTON_ACTIVE HIGH
+#endif
 #define STATUS_LIGHT_OUT 25
 #define DO_EXPAND(VAL)  VAL ## 1
 #define EXPAND(VAL)     DO_EXPAND(VAL)
@@ -158,7 +164,9 @@ bool socketClosed = false;
 bool linkPending = false;
 bool linkError = false;
 bool linkTimerPending = false; // waiting for token device code
-short resetCounter = 0;
+uint64_t resetPressStart = 0;
+bool resetWasPressed = false;
+const uint64_t RESET_HOLD_MS = 5000; // hold BOOT for 5s to factory reset
 uint32_t lastLinkTimerCheck = 0;
 uint32_t lastPing = 0;
 uint32_t lastStatusCheck = 0;
@@ -313,6 +321,8 @@ void setup() {
 #endif
 
   conf.begin();
+  // keep UI/link status in sync across reboots while waiting for user auth
+  linkPending = conf.ctm_user_pending;
   // wifi setup required
   if (conf.ssid && conf.pass && strnlen(conf.ssid, 32) > 0) {
     if (strnlen(conf.ssid, 33) == 33) {
@@ -324,8 +334,25 @@ void setup() {
     }
   }
 #ifdef HAS_BUTTON
+  // TinyPICO BOOT button is active-low; use pull-up. Dev kits keep existing wiring.
+#ifdef TINYPICO_PINS
+  pinMode(RESET_BUTTON, INPUT_PULLUP);
+#else
   pinMode(RESET_BUTTON, INPUT);
+#endif
   Serial.println("button setup");
+#endif
+
+#ifdef HAS_BUTTON
+  // allow factory reset if BOOT/RESET button is held during power-up
+  if (digitalRead(RESET_BUTTON) == RESET_BUTTON_ACTIVE) {
+    Serial.println("BOOT held on startup -> clearing WiFi/CTM settings");
+    setRedAll();
+    conf.reset();
+    conf.save();
+    delay(500);
+    ESP.restart();
+  }
 #endif
 
   pixels = new Adafruit_NeoPixel(LED_COUNT, STATUS_LIGHT_OUT, NEO_GRB + NEO_KHZ800);
@@ -472,6 +499,7 @@ void setup() {
   }
 
   if (conf.ctm_user_pending && conf.wifi_configured) {
+    linkPending = true;
     blinkOrange();
     Serial.println("pending user configuration to link device");
     conf.ctm_configured = false;
@@ -737,21 +765,32 @@ void loop() {
 
   // press and hold
 #ifdef HAS_BUTTON
-  int value = digitalRead(RESET_BUTTON);
-  if (value == HIGH) {
-    Serial.printf("reset pressed %d of 10", resetCounter);
-    resetCounter++;
-    delay(1000);
-    if (resetCounter > 10) {
+  bool pressed = digitalRead(RESET_BUTTON) == RESET_BUTTON_ACTIVE;
+  if (pressed) {
+    if (!resetWasPressed) {
+      resetWasPressed = true;
+      resetPressStart = millis();
+      Serial.println("Reset button pressed, hold 5s to clear WiFi/CTM");
+    }
+    uint64_t held = millis() - resetPressStart;
+    if (held > RESET_HOLD_MS) {
+      Serial.println("Reset hold detected -> clearing settings and rebooting to setup AP");
       setRedAll();
       conf.reset();
       conf.save();
-      delay(2000);
+      WiFi.disconnect(true);
+      delay(500);
       ESP.restart();
+    } else if (held > 2000 && (held / 500) % 2 == 0) {
+      // brief visual heartbeat while holding (non-destructive)
+      setErrorAll();
+      pixels->show();
     }
-    return;
-  } else {
-    resetCounter = 0;
+  } else if (resetWasPressed) {
+    uint64_t held = millis() - resetPressStart;
+    Serial.printf("Reset button released after %llu ms\n", (unsigned long long)held);
+    resetWasPressed = false;
+    resetPressStart = 0;
   }
 #endif
 
@@ -1027,7 +1066,10 @@ void handle_Conf() {
 
 void handle_LinkStatus() {
   Serial.println("status request");
-  snprintf(html_buffer, 4096, "{\"status\":\"%s\"}", linkPending ? "pending" : (linkError ? "error" : "success"));
+  bool pending = (conf.ctm_user_pending || linkPending) && !linkError;
+  bool success = conf.ctm_configured && !pending && !linkError;
+  const char *status = linkError ? "error" : (success ? "success" : (pending ? "pending" : "pending"));
+  snprintf(html_buffer, 4096, "{\"status\":\"%s\"}", status);
   server.send(200, "application/json", html_buffer);
 }
 
@@ -1047,8 +1089,19 @@ void handle_LinkSetup() {
         "%s"
         "<label>Account ID <input type='hidden' name='account_id' value='%d'/></label>"
         "</form>%s"
+    "<p id='link-status'>%s</p>"
+    "%s"
     "</body></html>", (conf.ctm_configured ? "" : "<input type='submit' value='Connect Device'/>"),
-    conf.account_id, (conf.ctm_configured ? "<form method='POST' action='/unlink'><input type='submit' value='Unlink Device'/></form>" : ""));
+    conf.account_id, (conf.ctm_configured ? "<form method='POST' action='/unlink'><input type='submit' value='Unlink Device'/></form>" : ""),
+    (conf.ctm_user_pending ? "Waiting for authorization..." : (conf.ctm_configured ? "Device linked." : "")),
+    ((conf.ctm_user_pending || conf.ctm_configured) ?
+      "<script>function poll(){fetch('/link_status',{cache:'no-store'}).then(r=>r.json()).then(d=>{"
+      "if(d.status==='success'){window.location='/';}"
+      "else if(d.status==='error'){document.getElementById('link-status').innerHTML='Authorization failed, retrying...';setTimeout(poll,4000);}"
+      "else{document.getElementById('link-status').innerHTML='Waiting for authorization...';setTimeout(poll,2000);}"
+      "}).catch(()=>setTimeout(poll,3000));}"
+      "setTimeout(poll,1500);</script>"
+    : ""));
   server.send(200, "text/html", html_buffer);
 }
 
@@ -1095,13 +1148,15 @@ void handle_Link() {
     "<a target='_blank' href='%s'>Authorize device</a>"
     "<div id='status'></div>"
     "<script>function checkStatus() {"
-    "fetch('/link_status').then(response => response.json()).then( (data) => {"
+    "fetch('/link_status',{cache:'no-store'}).then(response => response.json()).then((data) => {"
       "console.log(data);"
-      "if (data.status == 'pending') { setTimeout(checkStatus, 5000); } else if (data.status == 'error') { "
-        "document.getElementById('status').innerHTML = 'Error Try Again'; } else { window.location='/'; "
+      "if (data.status == 'pending') { document.getElementById('status').innerHTML = 'Waiting for authorization...'; setTimeout(checkStatus, 2000); } "
+      "else if (data.status == 'error') { "
+        "document.getElementById('status').innerHTML = 'Authorization failed, retrying...'; setTimeout(checkStatus, 4000); } "
+      "else { window.location='/'; "
       "}"
-    "});"
-    "} setTimeout(checkStatus, 5000);</script>"
+    "}).catch(() => { setTimeout(checkStatus, 3000); });"
+    "} setTimeout(checkStatus, 1500);</script>"
     "</body>"
     "</html>", (char*)((const char*)obj["user_code"]), (char*)((const char*)obj["verification_uri"]));
   server.send(200, "text/html", html_buffer);
@@ -1155,6 +1210,8 @@ void checkTokenStatus() {
     if (obj.containsKey("error")) {
       Serial.println("link error");
       linkError = true;
+      conf.ctm_user_pending = false;
+      conf.save();
     } else if (obj.containsKey("access_token") && obj.containsKey("account_id") && obj.containsKey("user_id")) {
       Serial.println("link success!");
       linkError = false;
@@ -1195,6 +1252,8 @@ void handle_Unlink() {
   conf.expires_in = 0;
   conf.account_id = 0;
   conf.team_id = 0;
+  linkPending = false;
+  linkError = false;
 
   memset(conf.device_code, 0, sizeof(conf.device_code));
   memset(conf.access_token, 0, sizeof(conf.access_token));
@@ -1751,43 +1810,4 @@ void fetchCustomStatus() {
     }
     conf.save();
   }
-}
-
-
-// found these very helpful functions from: http://www.geekhideout.com/urlcode.shtml
-
-/* Converts a hex character to its integer value */
-char from_hex(char ch) {
-  return isdigit(ch) ? ch - '0' : tolower(ch) - 'a' + 10;
-}
-
-/* Converts an integer value to its hex character*/
-char to_hex(char code) {
-  static char hex[] = "0123456789abcdef";
-  return hex[code & 15];
-}
-
-/* Returns a url-encoded version of str */
-String url_encode(String str) {
-  
-  char *pstr = (char*)str.c_str();
-  char *buf = (char*)malloc(strlen(pstr) * 3 + 1);
-  char *pbuf = buf;
-  int max = 100;
-
-  while (*pstr && max > 0) {
-    if (isalnum(*pstr) || *pstr == '-' || *pstr == '_' || *pstr == '.' || *pstr == '~') {
-      *pbuf++ = *pstr;
-    } else if (*pstr == ' ') {
-      *pbuf++ = '+';
-    } else {
-      *pbuf++ = '%', *pbuf++ = to_hex(*pstr >> 4), *pbuf++ = to_hex(*pstr & 15);
-    }
-    pstr++;
-    --max;
-  }
-  *pbuf = '\0';
-  String output = String(buf);
-  free(buf);
-  return output;
 }
