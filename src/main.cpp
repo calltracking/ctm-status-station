@@ -18,6 +18,8 @@
 #include <Wire.h>
 #include <DNSServer.h>
 #include <cstring>
+#include <esp_system.h>
+#include <esp_timer.h>
 #include <ArduinoJson.h> // see: https://arduinojson.org/v6/api/jsonobject/containskey/
 #include <ArduinoWebsockets.h>
 #include <Adafruit_NeoPixel.h>
@@ -167,6 +169,10 @@ bool linkTimerPending = false; // waiting for token device code
 uint64_t resetPressStart = 0;
 bool resetWasPressed = false;
 const uint64_t RESET_HOLD_MS = 5000; // hold BOOT for 5s to factory reset
+// allow multi-reset fallback (works even if BOOT button wiring resets the board)
+RTC_DATA_ATTR uint64_t lastBootUs;      // retained across resets if RTC power stays up
+RTC_DATA_ATTR uint8_t resetCycleCount;
+RTC_DATA_ATTR uint32_t resetMagic;
 uint32_t lastLinkTimerCheck = 0;
 uint32_t lastPing = 0;
 uint32_t lastStatusCheck = 0;
@@ -219,6 +225,7 @@ void handle_LinkStatus();
 void handle_Link();
 void handle_Unlink();
 void handle_Linked();
+void handle_FactoryReset();
 void handle_AgentLookup();
 void handle_CaptivePortal();
 void handle_IpStatus();
@@ -353,6 +360,30 @@ void setup() {
     delay(500);
     ESP.restart();
   }
+
+  // fallback: triple quick reset within 8 seconds to clear settings (works even if BOOT triggers a reset)
+  uint64_t nowUs = esp_timer_get_time();
+  if (resetMagic != 0xCAFEBABE) {
+    resetMagic = 0xCAFEBABE;
+    resetCycleCount = 0;
+    lastBootUs = 0;
+  }
+  Serial.printf("Reset reason: %d\n", esp_reset_reason());
+  Serial.printf("RTC resetCycleCount=%u lastBootUs=%llu now=%llu\n", resetCycleCount, (unsigned long long)lastBootUs, (unsigned long long)nowUs);
+  if (lastBootUs == 0 || (nowUs - lastBootUs) > 8000000ULL) { // >8s since last boot
+    resetCycleCount = 1;
+  } else {
+    resetCycleCount++;
+  }
+  lastBootUs = nowUs;
+  if (resetCycleCount >= 3) {
+    Serial.println("Triple reset detected -> clearing WiFi/CTM settings");
+    setRedAll();
+    conf.reset();
+    conf.save();
+    delay(300);
+    ESP.restart();
+  }
 #endif
 
   pixels = new Adafruit_NeoPixel(LED_COUNT, STATUS_LIGHT_OUT, NEO_GRB + NEO_KHZ800);
@@ -458,6 +489,7 @@ void setup() {
   server.on("/link_status", HTTP_GET, handle_LinkStatus);
   server.on("/unlink", HTTP_POST, handle_Unlink);
   server.on("/linked", HTTP_POST, handle_Linked);
+  server.on("/factory_reset", HTTP_POST, handle_FactoryReset);
   server.on("/agents", HTTP_GET, handle_AgentLookup);
   server.on("/save_agents", HTTP_POST, handle_SaveAgents);
   server.on("/save_colors", HTTP_POST, handle_SaveColors);
@@ -958,6 +990,9 @@ void handle_Main() {
       "<header>"
         "<div class='logo-trigger_wrapper'><img src='https://www.calltrackingmetrics.com/wp-content/themes/ctm-theme/img/ctm_logo.svg'/></div>"
         "<a href='/link_setup'>Connect Device</a>"
+        "<form method='POST' action='/factory_reset' style='display:inline;margin-left:10px;'>"
+          "<input type='submit' value='Factory Reset' onclick='return confirm(\"Clear WiFi and CTM link?\")'/>"
+        "</form>"
       "</header>"
       "<div id='settings' %s>"
         "<details>"
@@ -1090,6 +1125,9 @@ void handle_LinkSetup() {
         "<label>Account ID <input type='hidden' name='account_id' value='%d'/></label>"
         "</form>%s"
     "<p id='link-status'>%s</p>"
+    "<form method='POST' action='/factory_reset' style='margin-top:10px;'>"
+      "<input type='submit' value='Factory Reset (clear WiFi & link)' onclick='return confirm(\"Reset WiFi and CTM link?\")'/>"
+    "</form>"
     "%s"
     "</body></html>", (conf.ctm_configured ? "" : "<input type='submit' value='Connect Device'/>"),
     conf.account_id, (conf.ctm_configured ? "<form method='POST' action='/unlink'><input type='submit' value='Unlink Device'/></form>" : ""),
@@ -1107,6 +1145,17 @@ void handle_LinkSetup() {
 
 void handle_Link() {
   Serial.println("link request");
+  if (conf.ctm_configured && !conf.ctm_user_pending) {
+    Serial.println("link request ignored: already linked. Unlink first.");
+    snprintf(html_buffer, sizeof(html_buffer),
+      "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>Already linked</title></head>"
+      "<body style='font-family:Helvetica;text-align:center'>"
+      "<h3>Device is already linked.</h3>"
+      "<form method='POST' action='/unlink'><input type='submit' value='Unlink Device'/></form>"
+      "</body></html>");
+    server.send(409, "text/html", html_buffer);
+    return;
+  }
   linkPending = true;
   linkError   = false;
   WiFiClientSecure client;
@@ -1262,6 +1311,22 @@ void handle_Unlink() {
   conf.save();
   server.sendHeader("Location","/");
   server.send(303);
+}
+
+void handle_FactoryReset() {
+  Serial.println("factory reset requested via UI");
+  setRedAll();
+  conf.reset();
+  conf.save();
+  WiFi.disconnect(true);
+  snprintf(html_buffer, sizeof(html_buffer),
+    "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>Resetting</title></head>"
+    "<body style='font-family:Helvetica;text-align:center'>"
+    "<h2>Resetting...</h2><p>Clearing WiFi and CTM link, rebooting to setup AP.</p>"
+    "</body></html>");
+  server.send(200, "text/html", html_buffer);
+  delay(500);
+  ESP.restart();
 }
 
 void handle_Linked() {
@@ -1441,7 +1506,10 @@ void socketMessage(websockets::WebsocketsMessage message) {
   //Serial.println(data);
 
   if (data == "42[\"access.handshake\"]") {
-    StaticJsonDocument<512> reply;
+    JsonDocument reply; // ArduinoJson v7 recommends JsonDocument (dynamic pool)
+    reply["id"] = conf.user_id;
+    reply["account"] = conf.account_id;
+    reply["captoken"] = captoken;
     reply["id"] = conf.user_id;
     reply["account"] = conf.account_id;
     reply["captoken"] = captoken;
