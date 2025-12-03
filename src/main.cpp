@@ -181,8 +181,6 @@ uint32_t lastPing = 0;
 uint32_t lastStatusCheck = 0;
 int LocateLED = -1;
 int locateCycles = 0;
-JsonDocument doc;
-
 String captoken;
 bool hasAuthGranted = false;
 Ringer ringers[RINGERS+1]; // set of led's to blink for ringing
@@ -280,6 +278,7 @@ void fetchLedAgentStatus(int index) {
     Serial.println("error issuing device request");
     return;
   }
+  JsonDocument doc;
   DeserializationError error = deserializeJson(doc, body);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
@@ -1179,6 +1178,7 @@ void handle_Link() {
     Serial.println("error issuing device request");
     return;
   }
+  JsonDocument doc;
   DeserializationError error = deserializeJson(doc, body);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
@@ -1243,6 +1243,7 @@ void checkTokenStatus() {
     linkTimerPending = false;
     return;
   }
+  JsonDocument doc;
   DeserializationError error = deserializeJson(doc, body);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
@@ -1441,6 +1442,7 @@ void handle_AgentLookup() {
   if (r < 0) {
     Serial.println("error issuing device request");
   }
+  JsonDocument doc;
   DeserializationError error = deserializeJson(doc, body);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
@@ -1509,7 +1511,7 @@ void socketMessage(websockets::WebsocketsMessage message) {
   //Serial.println(data);
 
   if (data == "42[\"access.handshake\"]") {
-    JsonDocument reply; // ArduinoJson v7 recommends JsonDocument (dynamic pool)
+    JsonDocument reply; // small doc for handshake reply
     reply["id"] = conf.user_id;
     reply["account"] = conf.account_id;
     reply["captoken"] = captoken;
@@ -1527,13 +1529,14 @@ void socketMessage(websockets::WebsocketsMessage message) {
     // 42["auth.granted",{"account":18614}]
   } else if (data_str[0] == '4' && data_str[1] == '2' && data_str[2] == '[') {
     data.remove(0,2);
-    DeserializationError error = deserializeJson(doc, data);
+    JsonDocument msgDoc;
+    DeserializationError error = deserializeJson(msgDoc, data);
     if (error) {
       Serial.print(F("deserializeJson() failed: "));
       Serial.println(error.f_str());
       return;
     }
-    JsonArray msg = doc.as<JsonArray>();
+    JsonArray msg = msgDoc.as<JsonArray>();
     String action = msg[0];
     //JsonObject fields = msg[1].as<JsonObject>();
     //Serial.println("received:" + action);
@@ -1542,13 +1545,14 @@ void socketMessage(websockets::WebsocketsMessage message) {
     } else if (action == "message" && hasAuthGranted) {
       //Serial.printf("message: '%s'\n", data_str);
       //Serial.println(msg[1].as<String>());
-      DeserializationError error = deserializeJson(doc, msg[1].as<String>());
+      JsonDocument payloadDoc;
+      DeserializationError error = deserializeJson(payloadDoc, msg[1].as<String>());
       if (error) {
         Serial.print(F("deserializeJson() failed: "));
         Serial.println(error.f_str());
         return;
       }
-      JsonObject fields = doc.as<JsonObject>();
+      JsonObject fields = payloadDoc.as<JsonObject>();
       /*
        * : {"action":"status","what":"agent","data":{"id":1,"sid":"USREB077D06AC239BB5","status":"offline","logged_out":1,"queue_total":0}}
        */
@@ -1668,6 +1672,7 @@ bool refreshCapToken(int attempts) {
     Serial.println("error issuing device request");
     return false;
   }
+  JsonDocument doc;
   DeserializationError error = deserializeJson(doc, body);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
@@ -1721,6 +1726,7 @@ void refreshAccessToken() {
     linkError   = true;
     return;
   }
+  JsonDocument doc;
   DeserializationError error = deserializeJson(doc, body);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
@@ -1795,6 +1801,7 @@ void refreshAllAgentStatus() {
     Serial.println("error issuing device request");
     return;
   }
+  JsonDocument doc;
   DeserializationError error = deserializeJson(doc, body);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
@@ -1861,6 +1868,7 @@ void fetchCustomStatus() {
     Serial.println("error issuing device request");
     return;
   }
+  JsonDocument doc;
   DeserializationError error = deserializeJson(doc, body);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
