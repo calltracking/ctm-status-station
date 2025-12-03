@@ -40,6 +40,7 @@
 #endif
 
 #include "settings.h"
+#include "url_utils.h"
 #include "light_logic.h"
 
 #ifdef HAS_DISPLAY

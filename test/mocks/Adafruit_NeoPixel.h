@@ -6,7 +6,7 @@
 class Adafruit_NeoPixel {
 public:
   explicit Adafruit_NeoPixel(uint16_t n = 8, uint8_t pin = 0, uint8_t type = 0)
-    : count(n), colors(n, 0), brightness(255) {}
+    : count(n), colors(n, 0), brightness(255), showCount(0) {}
 
   void begin() {}
   void setBrightness(uint8_t b) { brightness = b; }
@@ -26,12 +26,15 @@ public:
   }
 
   void clear() { std::fill(colors.begin(), colors.end(), 0); }
-  void show() {}
+  void show() { ++showCount; }
   uint16_t numPixels() const { return count; }
+
+  uint32_t getShowCount() const { return showCount; }
+  void resetShowCount() { showCount = 0; }
 
 private:
   uint16_t count;
   std::vector<uint32_t> colors;
   uint8_t brightness;
+  uint32_t showCount;
 };
-

@@ -86,10 +86,45 @@ static void test_reset_wifi_clears_credentials() {
   TEST_ASSERT_EQUAL_CHAR(0, settings.pass[0]);
 }
 
+static void test_good_requires_wifi_configured() {
+  Settings s;
+  s.reset();
+  std::strcpy(s.ssid, "abcnet");
+  std::strcpy(s.pass, "goodpass");
+  s.wifi_configured = false;
+  s.save();
+
+  Settings loaded;
+  loaded.begin();
+  TEST_ASSERT_FALSE(loaded.good());
+
+  loaded.wifi_configured = true;
+  loaded.save();
+
+  Settings reloaded;
+  reloaded.begin();
+  TEST_ASSERT_TRUE(reloaded.good());
+}
+
+static void test_good_rejects_non_alnum_ssid_start() {
+  Settings s;
+  s.reset();
+  std::strcpy(s.ssid, "*badnet");
+  std::strcpy(s.pass, "goodpass");
+  s.wifi_configured = true;
+  s.save();
+
+  Settings loaded;
+  loaded.begin();
+  TEST_ASSERT_FALSE(loaded.good());
+}
+
 void run_settings_tests() {
   RUN_TEST(test_reset_defaults);
   RUN_TEST(test_save_and_load_round_trip);
   RUN_TEST(test_corruption_detected);
   RUN_TEST(test_led_helpers);
   RUN_TEST(test_reset_wifi_clears_credentials);
+  RUN_TEST(test_good_requires_wifi_configured);
+  RUN_TEST(test_good_rejects_non_alnum_ssid_start);
 }
