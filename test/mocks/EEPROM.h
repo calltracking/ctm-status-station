@@ -1,18 +1,8 @@
 #pragma once
 
+#include "Arduino.h"
 #include <cstdint>
 #include <vector>
-
-using byte = uint8_t;
-
-struct SerialMock {
-  template <typename T>
-  void println(const T &) {}
-};
-
-extern SerialMock Serial;
-
-inline void delay(unsigned long) {}
 
 class EEPROMClass {
 public:

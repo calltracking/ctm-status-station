@@ -40,6 +40,7 @@
 #endif
 
 #include "settings.h"
+#include "light_logic.h"
 
 #ifdef HAS_DISPLAY
 
@@ -166,12 +167,6 @@ JsonDocument doc;
 
 String captoken;
 bool hasAuthGranted = false;
-typedef struct _Ringer {
-  bool on;
-  bool high;
-  uint32_t lastRing;
-} Ringer;
-#define RINGERS LED_COUNT
 Ringer ringers[RINGERS+1]; // set of led's to blink for ringing
 
 Settings conf;
@@ -237,73 +232,11 @@ char to_hex(char code);
 String url_encode(String str);
 bool red_green_flipped = false;
 
-void setRed(int index)   {
-  if (red_green_flipped) {
-    pixels->setPixelColor(index, pixels->Color(0, 250, 0));
-  } else {
-    pixels->setPixelColor(index, pixels->Color(250, 0, 0));
-  }
-}
-void setGreen(int index) {
-  if (red_green_flipped) {
-    pixels->setPixelColor(index, pixels->Color(250, 0, 0));
-  } else {
-    pixels->setPixelColor(index, pixels->Color(0, 250, 0));
-  }
-}
-void setBlue(int index)  { pixels->setPixelColor(index, pixels->Color(0, 0, 250)); }
-void setPurple(int index)  {
-  if (red_green_flipped) {
-    pixels->setPixelColor(index, pixels->Color(0, 250, 250));
-  } else {
-    pixels->setPixelColor(index, pixels->Color(250, 250, 0));
-  }
-}
-void setOrange(int index)  { pixels->setPixelColor(index, pixels->Color(150, 150, 0)); }
-void setError(int index)  { pixels->setPixelColor(index, pixels->Color(55,200,90)); }
-
 void blinkGreen();
 void blinkOrange();
 void blinkBlue();
 
 void lightTestCycle();
-
-void setOff(int index)  { pixels->setPixelColor(index, pixels->Color(0, 0, 0)); }
-void setErrorAll() {
-  pixels->clear(); 
-  for (int i = 0; i < LED_COUNT; ++i) {
-    setError(i);
-  }
-  pixels->show(); 
-}
-void setOffAll() {
-  pixels->clear(); 
-  for (int i = 0; i < LED_COUNT; ++i) {
-    setOff(i);
-  }
-  pixels->show(); 
-}
-void setBlueAll() {
-  pixels->clear(); 
-  for (int i = 0; i < LED_COUNT; ++i) {
-    setBlue(i);
-  }
-  pixels->show(); 
-}
-void setRedAll() {
-  pixels->clear(); 
-  for (int i = 0; i < LED_COUNT; ++i) {
-    setRed(i);
-  }
-  pixels->show(); 
-}
-void setGreenAll() {
-  pixels->clear(); 
-  for (int i = 0; i < LED_COUNT; ++i) {
-    setGreen(i);
-  }
-  pixels->show(); 
-}
 
 void refreshAllAgentStatus();
 void fetchCustomStatus(); 
@@ -849,21 +782,7 @@ void loop() {
       previousWifiMillis = now;
     }
 
-    if (LocateLED > -1) {
-      locateCycles++;
-      if (locateCycles  < 10) {
-        setOrange(LocateLED);
-        pixels->show();
-        delay(1000);
-        Serial.printf("locating %d cycles: %d\n", LocateLED, locateCycles);
-      } else {
-        locateCycles = 0;
-        LocateLED = -1;
-        setOffAll();
-        refreshAllAgentStatus();
-        Serial.println("locate done resume all");
-      }
-    }
+    locateTick();
   }
 }
 
@@ -1443,41 +1362,6 @@ void handleNotFound() {
   }
   server.send(404, "text/plain", "404: Not found"); // Send HTTP status 404 (Not Found) when there's no handler for the URI in the request
 }
-void updateAgentStatusLed(int ledIndex, const String status) {
-  if (ledIndex < 0 || ledIndex >= RINGERS) { Serial.println("ledIndex out of bounds abort"); return; }
-  ringers[ledIndex].on = false;
-  if (status == "inbound" || status == "outbound" || status == "video_member") {
-    //printf("set red from %s for %d\n", status.c_str(), ledIndex);
-    setRed(ledIndex);
-  } else if (status == "wrapup") {
-    setPurple(ledIndex);
-  } else if (status == "offline" || status == "" || status == "null" || status == "video_member_end") {
-    setOff(ledIndex);
-  } else if (status == "online") {
-    setGreen(ledIndex);
-  } else if (status == "ringing") {
-    Serial.printf("toggle ringing for agent at %d\n", ledIndex);
-    ringers[ledIndex].on = true;
-    ringers[ledIndex].lastRing = millis();
-  } else {
-    Serial.println("configure pixels for custom status");
-    for (int i = 0; i < MAX_CUSTOM_STATUS; ++i) {
-      if (status == conf.custom_status_index[i]) {
-        int g = conf.custom_status_color[i][1], r = conf.custom_status_color[i][0], b = conf.custom_status_color[i][2];
-        // dim the custom statues to 20% brightness
-        r = (r * 20) >> 8;
-        g = (g * 20) >> 8;
-        b = (b * 20) >> 8;
-        pixels->setPixelColor(ledIndex, pixels->Color(g, // green
-                                                      r, // red
-                                                      b)); // blue
-        break;
-      }
-    }
-
-  }
-  pixels->show();
-}
 /*
  *
 -> 0{"sid":"wq...","upgrades":[],"pingInterval":25000,"pingTimeout":5000}	85  (12:18:53.065)
@@ -1497,7 +1381,7 @@ void socketMessage(websockets::WebsocketsMessage message) {
   //Serial.println(data);
 
   if (data == "42[\"access.handshake\"]") {
-    DynamicJsonDocument reply(512);
+    StaticJsonDocument<512> reply;
     reply["id"] = conf.user_id;
     reply["account"] = conf.account_id;
     reply["captoken"] = captoken;

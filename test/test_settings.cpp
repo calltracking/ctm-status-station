@@ -4,7 +4,7 @@
 #include "settings.h"
 #include <EEPROM.h>
 
-void setUp() {
+void reset_settings_fixture() {
   EEPROM.begin(SETTINGS_SIZE);
   for (int i = 0; i < SETTINGS_SIZE; ++i) {
     EEPROM.write(i, 0xFF);
@@ -12,7 +12,7 @@ void setUp() {
   EEPROM.commit();
 }
 
-void test_reset_defaults() {
+static void test_reset_defaults() {
   Settings settings;
   settings.reset();
 
@@ -23,7 +23,7 @@ void test_reset_defaults() {
   TEST_ASSERT_FALSE(settings.ledsConfigured());
 }
 
-void test_save_and_load_round_trip() {
+static void test_save_and_load_round_trip() {
   Settings original;
   original.reset();
   std::strcpy(original.ssid, "officewifi");
@@ -40,7 +40,7 @@ void test_save_and_load_round_trip() {
   TEST_ASSERT_TRUE(restored.wifi_configured);
 }
 
-void test_corruption_detected() {
+static void test_corruption_detected() {
   Settings original;
   original.reset();
   std::strcpy(original.ssid, "prodwifi");
@@ -56,7 +56,7 @@ void test_corruption_detected() {
   TEST_ASSERT_FALSE(corrupted.good());
 }
 
-void test_led_helpers() {
+static void test_led_helpers() {
   Settings settings;
   settings.reset();
 
@@ -72,7 +72,7 @@ void test_led_helpers() {
   TEST_ASSERT_FALSE(settings.ledsConfigured());
 }
 
-void test_reset_wifi_clears_credentials() {
+static void test_reset_wifi_clears_credentials() {
   Settings settings;
   settings.reset();
   std::strcpy(settings.ssid, "tempnet");
@@ -86,12 +86,10 @@ void test_reset_wifi_clears_credentials() {
   TEST_ASSERT_EQUAL_CHAR(0, settings.pass[0]);
 }
 
-int main(int argc, char **argv) {
-  UNITY_BEGIN();
+void run_settings_tests() {
   RUN_TEST(test_reset_defaults);
   RUN_TEST(test_save_and_load_round_trip);
   RUN_TEST(test_corruption_detected);
   RUN_TEST(test_led_helpers);
   RUN_TEST(test_reset_wifi_clears_credentials);
-  return UNITY_END();
 }
