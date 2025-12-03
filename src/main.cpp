@@ -1,3 +1,6 @@
+// Copyright (c) 2011-2025 CallTrackingMetrics
+// SPDX-License-Identifier: ISC
+
 /**
  * configure and listen for account or team events
  */

@@ -1,3 +1,6 @@
+// Copyright (c) 2011-2025 CallTrackingMetrics
+// SPDX-License-Identifier: ISC
+
 #ifndef __SETTINGS___H_
 #define __SETTINGS___H_
 

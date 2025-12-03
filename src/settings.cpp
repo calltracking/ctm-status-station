@@ -1,3 +1,6 @@
+// Copyright (c) 2011-2025 CallTrackingMetrics
+// SPDX-License-Identifier: ISC
+
 #include <Arduino_CRC32.h>
 #include <cstring>
 #include <cctype>

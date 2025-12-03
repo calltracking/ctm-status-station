@@ -1,3 +1,6 @@
+// Copyright (c) 2011-2025 CallTrackingMetrics
+// SPDX-License-Identifier: ISC
+
 #include "url_utils.h"
 
 char from_hex(char ch) {

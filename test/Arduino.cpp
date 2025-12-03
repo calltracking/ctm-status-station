@@ -1,3 +1,6 @@
+// Copyright (c) 2011-2025 CallTrackingMetrics
+// SPDX-License-Identifier: ISC
+
 #include "mocks/Arduino.h"
 
 unsigned long mockMillis = 0;

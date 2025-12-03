@@ -1,3 +1,6 @@
+// Copyright (c) 2011-2025 CallTrackingMetrics
+// SPDX-License-Identifier: ISC
+
 #include "light_logic.h"
 
 extern Adafruit_NeoPixel *pixels;

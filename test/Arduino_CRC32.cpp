@@ -1,3 +1,6 @@
+// Copyright (c) 2011-2025 CallTrackingMetrics
+// SPDX-License-Identifier: ISC
+
 #include "Arduino_CRC32.h"
 
 void Arduino_CRC32::update(const uint8_t *data, size_t length) {
