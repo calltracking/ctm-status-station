@@ -43,9 +43,39 @@ public:
   operator const char*() const { return str.c_str(); }
   operator bool() const { return type != JV_NULL && !(type == JV_STRING && str.isEmpty()); }
   operator String() const { return (type == JV_STRING) ? str : String(""); }
+  operator int() const {
+    if (type == JV_NUMBER) return static_cast<int>(num);
+    if (type == JV_STRING) return std::atoi(str.c_str());
+    return 0;
+  }
 
   bool operator==(const char *rhs) const { return str == rhs; }
   bool operator!=(const char *rhs) const { return !(*this == rhs); }
+
+  // lightweight setters used by code under test
+  JsonVariant& operator=(const String &s) { type = JV_STRING; str = s; obj = nullptr; arr = nullptr; boolean = false; num = 0; return *this; }
+  JsonVariant& operator=(const char *s)   { type = JV_STRING; str = String(s); obj = nullptr; arr = nullptr; boolean = false; num = 0; return *this; }
+  JsonVariant& operator=(int n)           { type = JV_NUMBER; num = n; str = String(n); obj = nullptr; arr = nullptr; boolean = false; return *this; }
+  JsonVariant& operator=(unsigned int n)  { type = JV_NUMBER; num = n; str = String((unsigned long)n); obj = nullptr; arr = nullptr; boolean = false; return *this; }
+  JsonVariant& operator=(double n)        { type = JV_NUMBER; num = n; str = String((long)n); obj = nullptr; arr = nullptr; boolean = false; return *this; }
+  JsonVariant& operator=(bool b)          { type = JV_BOOL; boolean = b; str = b ? "true" : "false"; obj = nullptr; arr = nullptr; return *this; }
+
+  JsonVariant& operator=(const JsonVariant &other) {
+    if (this == &other) return *this;
+    type = other.type;
+    str = other.str;
+    num = other.num;
+    boolean = other.boolean;
+    obj = other.obj;
+    arr = other.arr;
+    return *this;
+  }
+
+  bool containsKey(const char* k) const;
+  JsonVariant& operator[](const char* k);
+
+private:
+  void ensureObject();
 };
 
 class JsonArray {
@@ -90,11 +120,19 @@ public:
   JsonVariant root;
   template <typename T>
   T as() const { return root.as<T>(); }
-  JsonVariant& operator[](const char* k) { return root.obj->fields[k]; }
+  JsonVariant& operator[](const char* k) {
+    if (root.type != JV_OBJECT || root.obj == nullptr) {
+      root.type = JV_OBJECT;
+      root.obj = new JsonObject();
+    }
+    return root.obj->fields[std::string(k)];
+  }
   bool containsKey(const char* k) const { return root.type == JV_OBJECT && root.obj && root.obj->containsKey(k); }
 };
 
-inline void serializeJson(const JsonDocument& doc, String &out) { out = doc.root.as<String>(); }
+inline void serializeVariant(const JsonVariant& v, String &out);
+
+inline void serializeJson(const JsonDocument& doc, String &out) { serializeVariant(doc.root, out); }
 
 // Simple JSON parser for controlled test inputs
 inline void skip_ws(const String &s, size_t &i) { while (i < s.length() && isspace(s[i])) ++i; }
@@ -104,8 +142,21 @@ JsonVariant parseValue(const String &s, size_t &i);
 inline String parseString(const String &s, size_t &i) {
   String out;
   ++i; // skip opening quote
-  while (i < s.length() && s[i] != '\"') { out += s[i++]; }
-  if (i < s.length() && s[i] == '\"') ++i;
+  while (i < s.length()) {
+    char c = s[i];
+    if (c == '\\' && i + 1 < s.length()) {
+      // handle escaped quotes and backslashes
+      char next = s[i + 1];
+      if (next == '\"' || next == '\\') {
+        out += next;
+        i += 2;
+        continue;
+      }
+    }
+    if (c == '\"') { ++i; break; }
+    out += c;
+    ++i;
+  }
   return out;
 }
 
@@ -161,6 +212,68 @@ inline JsonVariant parseValue(const String &s, size_t &i) {
   if (s.substr(i, 5) == "false") { i += 5; return JsonVariant(false); }
   if (s.substr(i, 4) == "null") { i += 4; return JsonVariant(); }
   return JsonVariant();
+}
+
+inline void JsonVariant::ensureObject() {
+  if (type != JV_OBJECT || obj == nullptr) {
+    obj = new JsonObject();
+    arr = nullptr;
+    type = JV_OBJECT;
+    str = "";
+    num = 0;
+    boolean = false;
+  }
+}
+
+inline bool JsonVariant::containsKey(const char* k) const {
+  return type == JV_OBJECT && obj && obj->containsKey(k);
+}
+
+inline JsonVariant& JsonVariant::operator[](const char* k) {
+  ensureObject();
+  return obj->fields[std::string(k)];
+}
+
+inline void serializeVariant(const JsonVariant& v, String &out) {
+  switch (v.type) {
+    case JV_STRING:
+      out += "\"";
+      out += v.str;
+      out += "\"";
+      break;
+    case JV_NUMBER:
+      out += String((int)v.num);
+      break;
+    case JV_BOOL:
+      out += v.boolean ? "true" : "false";
+      break;
+    case JV_NULL:
+      out += "null";
+      break;
+    case JV_ARRAY: {
+      out += "[";
+      for (size_t i = 0; i < v.arr->values.size(); ++i) {
+        if (i) out += ",";
+        serializeVariant(v.arr->values[i], out);
+      }
+      out += "]";
+      break;
+    }
+    case JV_OBJECT: {
+      out += "{";
+      bool first = true;
+      for (const auto &kv : v.obj->fields) {
+        if (!first) out += ",";
+        first = false;
+        out += "\"";
+        out += kv.first.c_str();
+        out += "\":";
+        serializeVariant(kv.second, out);
+      }
+      out += "}";
+      break;
+    }
+  }
 }
 
 template <typename T>

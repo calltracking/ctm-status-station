@@ -31,6 +31,7 @@ extern bool hasAuthGranted;
 extern websockets::WebsocketsClient socket;
 extern Ringer ringers[RINGERS + 1];
 extern Adafruit_NeoPixel *pixels;
+extern uint32_t lastPing;
 extern IPAddress DeviceIP;
 extern const uint64_t AP_GRACE_MS;
 extern const unsigned long WIFIReConnectInteval;
@@ -40,6 +41,7 @@ void checkTokenStatus();
 bool refreshCapToken(int attempts=0);
 void refreshAccessToken();
 void refreshAllAgentStatus();
+void fetchCustomStatus();
 
 static Adafruit_NeoPixel pixelStrip(LED_COUNT);
 
@@ -145,6 +147,104 @@ static void test_ringer_toggle_blinks() {
   TEST_ASSERT_EQUAL_UINT32(pixelStrip.Color(150,150,0), pixelStrip.getPixelColor(0));
 }
 
+static void test_ringer_toggle_high_to_low() {
+  reset_loop_fixture();
+  conf.ctm_configured = true;
+  conf.wifi_configured = true;
+  conf.account_id = 1;
+  hasAuthGranted = true;
+  hasSocketConnected = true;
+  socketClosed = false;
+  ringers[0].on = true;
+  ringers[0].high = true;
+  ringers[0].lastRing = 0;
+
+  tickLoopOnce(600);
+
+  TEST_ASSERT_FALSE(ringers[0].high);
+  TEST_ASSERT_EQUAL_UINT32(0, pixelStrip.getPixelColor(0));
+}
+
+static void test_tick_loop_reconnects_closed_socket() {
+  reset_loop_fixture();
+  conf.ctm_configured = true;
+  conf.wifi_configured = true;
+  conf.account_id = 1;
+  std::strcpy(conf.access_token, "at");
+  socketClosed = true;
+  hasSocketConnected = false;
+  HTTPClient::setGlobal(200, "{\"token\":\"abc\"}");
+
+  tickLoopOnce(0);
+
+  TEST_ASSERT_TRUE(hasSocketConnected);
+}
+
+static void test_tick_loop_sends_ping_after_interval() {
+  reset_loop_fixture();
+  conf.ctm_configured = true;
+  conf.wifi_configured = true;
+  conf.account_id = 1;
+  hasSocketConnected = true;
+  socketClosed = false;
+  hasAuthGranted = true;
+  lastPing = 0;
+
+  tickLoopOnce(25050);
+
+  TEST_ASSERT_GREATER_THAN_UINT32(0, lastPing);
+}
+
+static void test_tick_loop_pings_without_auth() {
+  reset_loop_fixture();
+  conf.ctm_configured = true;
+  conf.wifi_configured = true;
+  conf.account_id = 1;
+  hasSocketConnected = true;
+  socketClosed = false;
+  hasAuthGranted = false;
+  lastPing = 0;
+
+  tickLoopOnce(30000);
+
+  TEST_ASSERT_GREATER_THAN_UINT32(0, lastPing);
+}
+
+static void test_fetch_custom_status_parses_statuses() {
+  reset_loop_fixture();
+  conf.ctm_configured = true;
+  conf.account_id = 9;
+  std::strcpy(conf.access_token, "tok");
+  HTTPClient::setGlobal(200, "{\"statuses\":[{\"name\":\"Break\",\"id\":\"break\"},{\"name\":\"Train\",\"id\":\"train\"}]}");
+
+  fetchCustomStatus();
+
+  TEST_ASSERT_EQUAL_STRING("break", conf.custom_status_index[0]);
+  TEST_ASSERT_EQUAL_STRING("train", conf.custom_status_index[1]);
+}
+
+static void test_dns_processed_when_ap_active() {
+  reset_loop_fixture();
+  apActive = true;
+  IsLocalAP = true;
+
+  tickLoopOnce(0);
+
+  TEST_ASSERT_TRUE(apActive);
+}
+
+static void test_fetch_custom_status_http_error() {
+  reset_loop_fixture();
+  conf.ctm_configured = true;
+  conf.account_id = 9;
+  std::strcpy(conf.access_token, "tok");
+  HTTPClient::setGlobal(-1, "{}");
+
+  fetchCustomStatus();
+
+  TEST_ASSERT_EQUAL_CHAR(0, conf.custom_status_index[0][0]);
+}
+
 static void test_link_pending_polls_status() {
   reset_loop_fixture();
   IsLocalAP = false;
@@ -168,6 +268,26 @@ static void test_refresh_cap_token_success() {
   (void)refreshCapToken();
   // Even if mock parsing is minimal, function should return without linkError
   TEST_ASSERT_FALSE(linkError);
+}
+
+static void test_refresh_cap_token_missing_account_returns_false() {
+  reset_loop_fixture();
+  conf.ctm_configured = true;
+  conf.account_id = 0;
+  std::strcpy(conf.refresh_token, "rt");
+
+  TEST_ASSERT_FALSE(refreshCapToken());
+  TEST_ASSERT_FALSE(conf.ctm_configured);
+}
+
+static void test_refresh_cap_token_http_error() {
+  reset_loop_fixture();
+  conf.ctm_configured = true;
+  conf.account_id = 1;
+  std::strcpy(conf.access_token, "at");
+  HTTPClient::setGlobal(-1, "{}");
+
+  TEST_ASSERT_FALSE(refreshCapToken());
 }
 
 static void test_refresh_access_token_success() {
@@ -201,8 +321,17 @@ void run_loop_state_tests() {
   RUN_TEST(test_ap_grace_period_stops_ap);
   RUN_TEST(test_wifi_reconnect_when_lost);
   RUN_TEST(test_ringer_toggle_blinks);
+  RUN_TEST(test_ringer_toggle_high_to_low);
+  RUN_TEST(test_tick_loop_reconnects_closed_socket);
+  RUN_TEST(test_tick_loop_sends_ping_after_interval);
+  RUN_TEST(test_tick_loop_pings_without_auth);
   RUN_TEST(test_link_pending_polls_status);
   RUN_TEST(test_refresh_cap_token_success);
+  RUN_TEST(test_refresh_cap_token_missing_account_returns_false);
+  RUN_TEST(test_refresh_cap_token_http_error);
   RUN_TEST(test_refresh_access_token_success);
   RUN_TEST(test_refresh_all_agent_status_updates_leds);
+  RUN_TEST(test_fetch_custom_status_parses_statuses);
+  RUN_TEST(test_dns_processed_when_ap_active);
+  RUN_TEST(test_fetch_custom_status_http_error);
 }

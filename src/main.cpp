@@ -204,6 +204,19 @@ uint64_t apGraceStart = 0;
 uint64_t AP_GRACE_MS = 12000; // keep AP alive after STA connect so UI can redirect
 Adafruit_NeoPixel *pixels;
 bool hasSocketConnected = false;
+#ifdef CTM_UNIT_TEST
+bool debug_socket_message_entered = false;
+bool debug_socket_message_has_fields = false;
+bool debug_socket_message_status_branch = false;
+bool debug_socket_message_has_id = false;
+int  debug_socket_agent_id = -1;
+int  debug_socket_led_index = -1;
+int  debug_socket_data_id = -1;
+String debug_socket_payload_str;
+String debug_socket_status_value;
+bool debug_socket_has_status = false;
+String debug_socket_data_keys;
+#endif
 
 void setup_https(WiFiClientSecure *client, HTTPClient *http, const String &host, const String &path) {
   client->setCACert(root_ca);
@@ -580,7 +593,6 @@ void dnsPreload(const char *name) {
   Serial.printf("hostbyname: %s ret= %d %s \n", name, ret, ipaddr.toString().c_str() );
 }
 
-#ifndef CTM_UNIT_TEST
 void startWebsocket() {
   Serial.println("startWebsocket");
   bool didRefresh = refreshCapToken();
@@ -614,9 +626,6 @@ void startWebsocket() {
     //tp.DotStar_SetPixelColor(100, 255, 100);
   }
 }
-#else
-void startWebsocket() {}
-#endif
 
 void lightTestCycle() {
   pixels->clear();
@@ -1523,12 +1532,14 @@ void handleNotFound() {
 <- 42["calls.active",{"account":18614}]	36  (12:19:08.189)
 -> 42["message",{"action":"active","what":"call","data":"0"}]
  */
-#ifndef CTM_UNIT_TEST
 void socketMessage(websockets::WebsocketsMessage message) {
   //Serial.print("WS(msg): ");
   String data = message.data();
   const char *data_str = data.c_str();
   //Serial.println(data);
+#ifdef CTM_UNIT_TEST
+  debug_socket_message_entered = true;
+#endif
 
   if (data == "42[\"access.handshake\"]") {
     JsonDocument reply; // small doc for handshake reply
@@ -1566,6 +1577,9 @@ void socketMessage(websockets::WebsocketsMessage message) {
       //Serial.printf("message: '%s'\n", data_str);
       //Serial.println(msg[1].as<String>());
       JsonDocument payloadDoc;
+#ifdef CTM_UNIT_TEST
+      debug_socket_payload_str = msg[1].as<String>();
+#endif
       DeserializationError error = deserializeJson(payloadDoc, msg[1].as<String>());
       if (error) {
         Serial.print(F("deserializeJson() failed: "));
@@ -1577,6 +1591,9 @@ void socketMessage(websockets::WebsocketsMessage message) {
        * : {"action":"status","what":"agent","data":{"id":1,"sid":"USREB077D06AC239BB5","status":"offline","logged_out":1,"queue_total":0}}
        */
       if (fields.containsKey("action") && fields.containsKey("what") && fields.containsKey("data") && conf.ledsConfigured()) {
+#ifdef CTM_UNIT_TEST
+        debug_socket_message_has_fields = true;
+#endif
         String action = fields["action"];
         String what   = fields["what"];
         // {"time":1636468005.6600325,"action":"status","what":"chat","data":{"id":423084,"time":1636468005.6600325}} and then boom?
@@ -1586,8 +1603,24 @@ void socketMessage(websockets::WebsocketsMessage message) {
         // 42["message","{\"time\":1636224452.3807418,\"action\":\"status\",\"what\":\"inbound\",\"data\":{\"id\":19223,\"time\":1636224452.3807418}}"
         if ((action == "status" || (action == "agent" && what == "ringing")) && fields["data"].containsKey("id")) {
           int agent_id = fields["data"]["id"];
-          String status = (what == "agent" && fields["data"].containsKey("status")) ? fields["data"]["status"].as<String>() : "";
+          bool has_status = (action == "agent" && fields["data"].containsKey("status"));
+          String status = has_status ? fields["data"]["status"].as<String>() : "";
           int ledIndex = conf.getAgentLed(agent_id);
+#ifdef CTM_UNIT_TEST
+          debug_socket_data_keys = "";
+          if (fields["data"].type == JV_OBJECT && fields["data"].obj) {
+            for (const auto &kv : fields["data"].obj->fields) {
+              if (debug_socket_data_keys.length()) debug_socket_data_keys += ",";
+              debug_socket_data_keys += kv.first.c_str();
+            }
+          }
+          debug_socket_message_has_id = true;
+          debug_socket_agent_id = agent_id;
+          debug_socket_led_index = ledIndex;
+          debug_socket_data_id = fields["data"]["id"];
+          debug_socket_status_value = status;
+          debug_socket_has_status = has_status;
+#endif
           if (ledIndex > -1 && ledIndex < LED_COUNT) {
             Serial.printf("status[%s] for %d, with led: %d\n", status.c_str(), agent_id, ledIndex);
             // {"action":"status","what":"agent","data":{"id":19223,"sid":"USR043E46722529BCB5F2411A7E1C8C06E1","status":"ringing","from_status":"online","logged_out":0,"queue_total":4}}
@@ -1617,6 +1650,9 @@ status[] for 1, with led: 0
  *  '["message","{\"time\":1636908806.6114316,\"action\":\"status\",\"what\":\"Lunch_and_Coffee_Break\",\"data\":{\"id\":1,\"time\":1636908806.6114316}}"]'
  */
               updateAgentStatusLed(ledIndex, status);
+#ifdef CTM_UNIT_TEST
+              debug_socket_message_status_branch = true;
+#endif
             }
           }
         }
@@ -1626,11 +1662,7 @@ status[] for 1, with led: 0
    // Serial.printf("header packets? '%s'\n", data_str);
   }
 }
-#else
-void socketMessage(websockets::WebsocketsMessage) {}
-#endif
 // see: https://github.com/Links2004/arduinoWebSockets/blob/master/examples/esp32/WebSocketClientSocketIOack/WebSocketClientSocketIOack.ino
-#ifndef CTM_UNIT_TEST
 void socketEvent(websockets::WebsocketsEvent event, String data) {
   if (event == websockets::WebsocketsEvent::ConnectionOpened) {
     socketClosed  = false;
@@ -1652,9 +1684,6 @@ void socketEvent(websockets::WebsocketsEvent event, String data) {
     Serial.println("WS(evt): unknown!");
   }
 }
-#else
-void socketEvent(websockets::WebsocketsEvent, String) {}
-#endif
 bool refreshCapToken(int attempts) {
   captoken  = ""; // set to empty
   if (!conf.ctm_configured || !conf.access_token || !conf.account_id) {

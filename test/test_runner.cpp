@@ -15,6 +15,7 @@ void run_url_utils_tests();
 void run_main_behavior_tests();
 void run_main_handler_tests();
 void run_loop_state_tests();
+void run_websocket_tests();
 
 void setUp() {
   reset_settings_fixture();
@@ -32,5 +33,6 @@ int main(int argc, char **argv) {
   run_main_behavior_tests();
   run_main_handler_tests();
   run_loop_state_tests();
+  run_websocket_tests();
   return UNITY_END();
 }
