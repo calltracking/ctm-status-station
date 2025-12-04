@@ -26,6 +26,9 @@ public:
   size_t length() const { return data_.size(); }
   bool isEmpty() const { return data_.empty(); }
   int toInt() const { return std::atoi(data_.c_str()); }
+  String substr(size_t pos, size_t len = std::string::npos) const {
+    return String(data_.substr(pos, len));
+  }
   void remove(size_t index, size_t count) { if (index < data_.size()) data_.erase(index, count); }
 
   char operator[](size_t i) const { return data_[i]; }

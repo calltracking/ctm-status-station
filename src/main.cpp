@@ -188,7 +188,7 @@ Ringer ringers[RINGERS+1]; // set of led's to blink for ringing
 Settings conf;
 websockets::WebsocketsClient socket;
 IPAddress DeviceIP;
-const unsigned long WIFIReConnectInteval = 30000;
+unsigned long WIFIReConnectInteval = 30000;
 unsigned long previousWifiMillis = 0;
 WebServer server(80);
 DNSServer dnsServer;
@@ -201,7 +201,7 @@ bool staConnectInProgress = false;
 bool staConnectFailed = false;
 uint64_t staConnectStart = 0;
 uint64_t apGraceStart = 0;
-const uint64_t AP_GRACE_MS = 12000; // keep AP alive after STA connect so UI can redirect
+uint64_t AP_GRACE_MS = 12000; // keep AP alive after STA connect so UI can redirect
 Adafruit_NeoPixel *pixels;
 bool hasSocketConnected = false;
 
@@ -254,6 +254,7 @@ void blinkOrange();
 void blinkBlue();
 
 void lightTestCycle();
+void tickLoopOnce(uint32_t now);
 
 void refreshAllAgentStatus();
 void fetchCustomStatus(); 
@@ -322,6 +323,8 @@ void testdrawtext(const char *text, uint16_t color, int line=0) {
 #else
 #endif
 
+#ifndef CTM_UNIT_TEST
+// GCOVR_EXCL_START
 void setup() {
   Serial.begin(115200);
 
@@ -568,6 +571,8 @@ void setup() {
   }
   lastPing = millis();
 }
+#endif // CTM_UNIT_TEST
+
 void dnsPreload(const char *name) {
   IPAddress ipaddr;
   int ret;
@@ -699,9 +704,8 @@ void blinkBlue() {
   delay(500); // Pause before next pass through loop
 }
 
-void loop() {
-	uint32_t deltaSeconds;
-  uint32_t now = millis();
+void tickLoopOnce(uint32_t now) {
+  uint32_t deltaSeconds;
 #ifdef LIGHT_TEST
   lightTestCycle();
   return;
@@ -867,7 +871,7 @@ void loop() {
     locateTick();
   }
 }
-
+// GCOVR_EXCL_STOP
 void handle_Style() {
   Serial.print("GET /style.css");
   snprintf(html_buffer, sizeof(html_buffer),
@@ -1228,7 +1232,6 @@ void handle_Link() {
   linkTimerPending = true;
 }
 // helpful: https://savjee.be/2020/01/multitasking-esp32-arduino-freertos/
-#ifndef CTM_UNIT_TEST
 void checkTokenStatus() {
   const char *path = "/oauth2/token";
   Serial.println("checking token status");
@@ -1308,9 +1311,9 @@ void checkTokenStatus() {
     }
   }
 }
-#else
-void checkTokenStatus() {}
-#endif
+void loop() {
+  tickLoopOnce(millis());
+}
 void handle_Unlink() {
   conf.ctm_configured = false;
   conf.ctm_user_pending = false;
@@ -1652,7 +1655,6 @@ void socketEvent(websockets::WebsocketsEvent event, String data) {
 #else
 void socketEvent(websockets::WebsocketsEvent, String) {}
 #endif
-#ifndef CTM_UNIT_TEST
 bool refreshCapToken(int attempts) {
   captoken  = ""; // set to empty
   if (!conf.ctm_configured || !conf.access_token || !conf.account_id) {
@@ -1720,7 +1722,7 @@ bool refreshCapToken(int attempts) {
     }
   }
   captoken = (const char*)obj["token"]; // capture the token at start up
-  if (captoken) {
+  if (captoken.length()) {
     Serial.println("captoken:");
     Serial.println(captoken);
     return true;
@@ -1729,10 +1731,6 @@ bool refreshCapToken(int attempts) {
     return false;
   }
 }
-#else
-bool refreshCapToken(int) { return false; }
-#endif
-#ifndef CTM_UNIT_TEST
 void refreshAccessToken() {
   if (!conf.ctm_configured || !conf.refresh_token) {
     Serial.println("unable to refresh without a refresh token!");
@@ -1795,9 +1793,6 @@ void refreshAccessToken() {
     linkError = true;
   }
 }
-#else
-void refreshAccessToken() {}
-#endif
 #ifndef CTM_UNIT_TEST
 void refreshAllAgentStatus() {
 	Serial.printf("refreshAllAgentStatus\n");
@@ -1848,10 +1843,9 @@ void refreshAllAgentStatus() {
     setErrorAll();
   } else if (obj.containsKey("users")) {
     JsonArray users = obj["users"].as<JsonArray>();
-
-		if (users.size() > 0) {
-
-			for (JsonObject user : users) {
+			if (users.size() > 0) {
+				for (JsonVariant userVar : users) {
+          JsonObject user = userVar.as<JsonObject>();
 				int ledIndex = conf.getAgentLed((int)user["uid"]);
 				if (ledIndex > -1 && ledIndex < LED_COUNT) {
 					Serial.printf("update for led: %d for user id: %d, %s\n", ledIndex, (int)user["uid"], (const char*)user["name"]);
@@ -1883,7 +1877,6 @@ void refreshAllAgentStatus() {
 }
 #endif
 
-#ifndef CTM_UNIT_TEST
 void fetchCustomStatus() {
   Serial.printf("fetching available statues for account: %d", conf.account_id);
   WiFiClientSecure client;
@@ -1918,13 +1911,11 @@ void fetchCustomStatus() {
   if (obj.containsKey("statuses")) {
     JsonArray statuses = obj["statuses"].as<JsonArray>();
     int i = 0;
-    for (JsonObject status : statuses) {
+    for (JsonVariant statusVar : statuses) {
+      JsonObject status = statusVar.as<JsonObject>();
       Serial.printf("status[%d]: %s, normalized to: %s\n", i, (const char*)status["name"], (const char*)status["id"]);
       snprintf(conf.custom_status_index[i++], 31, "%s", (const char*)status["id"]);
     }
     conf.save();
   }
 }
-#else
-void fetchCustomStatus() {}
-#endif
