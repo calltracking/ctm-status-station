@@ -13,6 +13,7 @@ void reset_url_fixture();
 void run_url_utils_tests();
 
 void run_main_behavior_tests();
+void run_main_handler_tests();
 
 void setUp() {
   reset_settings_fixture();
@@ -28,5 +29,6 @@ int main(int argc, char **argv) {
   run_light_logic_tests();
   run_url_utils_tests();
   run_main_behavior_tests();
+  run_main_handler_tests();
   return UNITY_END();
 }
