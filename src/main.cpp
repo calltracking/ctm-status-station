@@ -1541,6 +1541,15 @@ void socketMessage(websockets::WebsocketsMessage message) {
   debug_socket_message_entered = true;
 #endif
 
+  // Handle Engine.IO heartbeat: server sends "2" (ping) and expects "3" (pong)
+  // within pingTimeout (5s in our handshake). If we skip this, the Socket.IO
+  // server will drop the connection even if WebSocket-level pings succeed.
+  if (data == "2") {
+    socket.send("3");
+    lastPing = millis();
+    return;
+  }
+
   if (data == "42[\"access.handshake\"]") {
     JsonDocument reply; // small doc for handshake reply
     reply["id"] = conf.user_id;
