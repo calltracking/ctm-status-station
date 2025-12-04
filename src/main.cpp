@@ -258,6 +258,7 @@ void lightTestCycle();
 void refreshAllAgentStatus();
 void fetchCustomStatus(); 
 
+#ifndef CTM_UNIT_TEST
 // fetch current status information for the given agent for the led at index
 void fetchLedAgentStatus(int index) {
   if (!conf.leds[index]) { return; }
@@ -305,6 +306,9 @@ void fetchLedAgentStatus(int index) {
     updateAgentStatusLed(index, "offline");
   }
 }
+#else
+void fetchLedAgentStatus(int) {}
+#endif
 
 void testdrawtext(const char *text, uint16_t color, int line=0) {
 #ifdef HAS_DISPLAY
@@ -571,6 +575,7 @@ void dnsPreload(const char *name) {
   Serial.printf("hostbyname: %s ret= %d %s \n", name, ret, ipaddr.toString().c_str() );
 }
 
+#ifndef CTM_UNIT_TEST
 void startWebsocket() {
   Serial.println("startWebsocket");
   bool didRefresh = refreshCapToken();
@@ -604,6 +609,9 @@ void startWebsocket() {
     //tp.DotStar_SetPixelColor(100, 255, 100);
   }
 }
+#else
+void startWebsocket() {}
+#endif
 
 void lightTestCycle() {
   pixels->clear();
@@ -1220,6 +1228,7 @@ void handle_Link() {
   linkTimerPending = true;
 }
 // helpful: https://savjee.be/2020/01/multitasking-esp32-arduino-freertos/
+#ifndef CTM_UNIT_TEST
 void checkTokenStatus() {
   const char *path = "/oauth2/token";
   Serial.println("checking token status");
@@ -1299,6 +1308,9 @@ void checkTokenStatus() {
     }
   }
 }
+#else
+void checkTokenStatus() {}
+#endif
 void handle_Unlink() {
   conf.ctm_configured = false;
   conf.ctm_user_pending = false;
@@ -1419,6 +1431,7 @@ void handle_SaveAgents() {
   server.send(303);
 }
 
+#ifndef CTM_UNIT_TEST
 void handle_AgentLookup() {
   String path = String("/api/v1/");
   if (server.hasArg("q")) {
@@ -1458,6 +1471,9 @@ void handle_AgentLookup() {
     server.send(200, "application/json", body);// "{ \"results\": [], \"pagination\": { \"more\": false } }"); // Send HTTP status 404 (Not Found) when there's no handler for the URI in the request
   }
 }
+#else
+void handle_AgentLookup() { server.send(200, "application/json", "{}"); }
+#endif
 
 // Send a redirect back to the local setup page for captive portal probes
 void handle_CaptivePortal() {
@@ -1504,6 +1520,7 @@ void handleNotFound() {
 <- 42["calls.active",{"account":18614}]	36  (12:19:08.189)
 -> 42["message",{"action":"active","what":"call","data":"0"}]
  */
+#ifndef CTM_UNIT_TEST
 void socketMessage(websockets::WebsocketsMessage message) {
   //Serial.print("WS(msg): ");
   String data = message.data();
@@ -1606,7 +1623,11 @@ status[] for 1, with led: 0
    // Serial.printf("header packets? '%s'\n", data_str);
   }
 }
+#else
+void socketMessage(websockets::WebsocketsMessage) {}
+#endif
 // see: https://github.com/Links2004/arduinoWebSockets/blob/master/examples/esp32/WebSocketClientSocketIOack/WebSocketClientSocketIOack.ino
+#ifndef CTM_UNIT_TEST
 void socketEvent(websockets::WebsocketsEvent event, String data) {
   if (event == websockets::WebsocketsEvent::ConnectionOpened) {
     socketClosed  = false;
@@ -1628,6 +1649,10 @@ void socketEvent(websockets::WebsocketsEvent event, String data) {
     Serial.println("WS(evt): unknown!");
   }
 }
+#else
+void socketEvent(websockets::WebsocketsEvent, String) {}
+#endif
+#ifndef CTM_UNIT_TEST
 bool refreshCapToken(int attempts) {
   captoken  = ""; // set to empty
   if (!conf.ctm_configured || !conf.access_token || !conf.account_id) {
@@ -1704,6 +1729,10 @@ bool refreshCapToken(int attempts) {
     return false;
   }
 }
+#else
+bool refreshCapToken(int) { return false; }
+#endif
+#ifndef CTM_UNIT_TEST
 void refreshAccessToken() {
   if (!conf.ctm_configured || !conf.refresh_token) {
     Serial.println("unable to refresh without a refresh token!");
@@ -1766,6 +1795,10 @@ void refreshAccessToken() {
     linkError = true;
   }
 }
+#else
+void refreshAccessToken() {}
+#endif
+#ifndef CTM_UNIT_TEST
 void refreshAllAgentStatus() {
 	Serial.printf("refreshAllAgentStatus\n");
   lastStatusCheck = millis();
@@ -1848,7 +1881,9 @@ void refreshAllAgentStatus() {
   }
 
 }
+#endif
 
+#ifndef CTM_UNIT_TEST
 void fetchCustomStatus() {
   Serial.printf("fetching available statues for account: %d", conf.account_id);
   WiFiClientSecure client;
@@ -1890,3 +1925,6 @@ void fetchCustomStatus() {
     conf.save();
   }
 }
+#else
+void fetchCustomStatus() {}
+#endif

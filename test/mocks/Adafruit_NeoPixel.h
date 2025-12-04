@@ -6,6 +6,14 @@
 #include <cstdint>
 #include <vector>
 
+#ifndef NEO_GRB
+#define NEO_GRB 0
+#endif
+
+#ifndef NEO_KHZ800
+#define NEO_KHZ800 0
+#endif
+
 class Adafruit_NeoPixel {
 public:
   explicit Adafruit_NeoPixel(uint16_t n = 8, uint8_t pin = 0, uint8_t type = 0)

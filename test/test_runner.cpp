@@ -12,6 +12,8 @@ void run_light_logic_tests();
 void reset_url_fixture();
 void run_url_utils_tests();
 
+void run_main_behavior_tests();
+
 void setUp() {
   reset_settings_fixture();
   reset_light_logic_fixture();
@@ -25,5 +27,6 @@ int main(int argc, char **argv) {
   run_settings_tests();
   run_light_logic_tests();
   run_url_utils_tests();
+  run_main_behavior_tests();
   return UNITY_END();
 }

@@ -8,13 +8,14 @@
 #include "Arduino.h"
 #include <EEPROM.h>
 
-Settings conf;
-bool red_green_flipped = false;
+extern Settings conf;
+extern bool red_green_flipped;
+extern Adafruit_NeoPixel *pixels;
+extern Ringer ringers[RINGERS + 1];
+extern int LocateLED;
+extern int locateCycles;
+
 Adafruit_NeoPixel pixelStrip(LED_COUNT);
-Adafruit_NeoPixel *pixels = &pixelStrip;
-Ringer ringers[RINGERS + 1];
-int LocateLED = -1;
-int locateCycles = 0;
 
 static bool refresh_called = false;
 void refreshAllAgentStatus() { refresh_called = true; }
@@ -24,6 +25,7 @@ void reset_light_logic_fixture() {
   for (int i = 0; i < RINGERS + 1; ++i) {
     ringers[i] = {false, false, 0};
   }
+  pixels = &pixelStrip;
   pixelStrip.clear();
   red_green_flipped = false;
   setMockMillis(0);
@@ -31,6 +33,7 @@ void reset_light_logic_fixture() {
   locateCycles = 0;
   memset(conf.custom_status_index, 0, sizeof(conf.custom_status_index));
   memset(conf.custom_status_color, 0, sizeof(conf.custom_status_color));
+  conf.reset();
 }
 
 static void test_outbound_sets_red_and_clears_ringer() {
