@@ -32,6 +32,7 @@ extern websockets::WebsocketsClient socket;
 extern Ringer ringers[RINGERS + 1];
 extern Adafruit_NeoPixel *pixels;
 extern uint32_t lastPing;
+extern bool red_green_flipped;
 extern IPAddress DeviceIP;
 extern const uint64_t AP_GRACE_MS;
 extern const unsigned long WIFIReConnectInteval;
@@ -62,6 +63,7 @@ static void reset_loop_fixture() {
   hasSocketConnected = true;
   socketClosed = false;
   hasAuthGranted = false;
+  red_green_flipped = false;
   pixels = &pixelStrip;
   pixelStrip.clear();
   HTTPClient::setGlobal(200, "{}");
@@ -245,6 +247,18 @@ static void test_fetch_custom_status_http_error() {
   TEST_ASSERT_EQUAL_CHAR(0, conf.custom_status_index[0][0]);
 }
 
+static void test_fetch_custom_status_bad_json() {
+  reset_loop_fixture();
+  conf.ctm_configured = true;
+  conf.account_id = 9;
+  std::strcpy(conf.access_token, "tok");
+  HTTPClient::setGlobal(200, "not-json");
+
+  fetchCustomStatus();
+
+  TEST_ASSERT_EQUAL_CHAR(0, conf.custom_status_index[0][0]);
+}
+
 static void test_link_pending_polls_status() {
   reset_loop_fixture();
   IsLocalAP = false;
@@ -290,6 +304,28 @@ static void test_refresh_cap_token_http_error() {
   TEST_ASSERT_FALSE(refreshCapToken());
 }
 
+static void test_refresh_cap_token_authentication_failure() {
+  reset_loop_fixture();
+  conf.ctm_configured = true;
+  conf.account_id = 1;
+  std::strcpy(conf.access_token, "at");
+  std::strcpy(conf.refresh_token, "rt");
+  HTTPClient::setGlobal(200, "{\"authentication\":\"failed token expired\"}");
+
+  TEST_ASSERT_FALSE(refreshCapToken());
+  TEST_ASSERT_TRUE(linkError); // refreshAccessToken sets linkError on parse failure
+}
+
+static void test_refresh_cap_token_empty_body_returns_false() {
+  reset_loop_fixture();
+  conf.ctm_configured = true;
+  conf.account_id = 1;
+  std::strcpy(conf.access_token, "at");
+  HTTPClient::setGlobal(200, "{}");
+
+  TEST_ASSERT_FALSE(refreshCapToken());
+}
+
 static void test_refresh_access_token_success() {
   reset_loop_fixture();
   conf.ctm_configured = true;
@@ -315,6 +351,19 @@ static void test_refresh_all_agent_status_updates_leds() {
   TEST_ASSERT_FALSE(linkError);
 }
 
+static void test_refresh_all_agent_status_videos_sets_inbound() {
+  reset_loop_fixture();
+  conf.ctm_configured = true;
+  conf.wifi_configured = true;
+  conf.account_id = 5;
+  conf.leds[0] = 7;
+  HTTPClient::setGlobal(200, "{\"users\":[{\"uid\":7,\"videos\":2}]}");
+
+  refreshAllAgentStatus();
+
+  TEST_ASSERT_FALSE(linkError);
+}
+
 void run_loop_state_tests() {
   RUN_TEST(test_sta_connect_success_sets_flags);
   RUN_TEST(test_sta_connect_timeout_enters_ap_mode);
@@ -327,11 +376,15 @@ void run_loop_state_tests() {
   RUN_TEST(test_tick_loop_pings_without_auth);
   RUN_TEST(test_link_pending_polls_status);
   RUN_TEST(test_refresh_cap_token_success);
+  RUN_TEST(test_refresh_cap_token_authentication_failure);
+  RUN_TEST(test_refresh_cap_token_empty_body_returns_false);
   RUN_TEST(test_refresh_cap_token_missing_account_returns_false);
   RUN_TEST(test_refresh_cap_token_http_error);
   RUN_TEST(test_refresh_access_token_success);
   RUN_TEST(test_refresh_all_agent_status_updates_leds);
+  RUN_TEST(test_refresh_all_agent_status_videos_sets_inbound);
   RUN_TEST(test_fetch_custom_status_parses_statuses);
   RUN_TEST(test_dns_processed_when_ap_active);
   RUN_TEST(test_fetch_custom_status_http_error);
+  RUN_TEST(test_fetch_custom_status_bad_json);
 }
