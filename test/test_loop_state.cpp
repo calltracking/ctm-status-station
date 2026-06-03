@@ -351,6 +351,88 @@ static void test_refresh_all_agent_status_updates_leds() {
   TEST_ASSERT_FALSE(linkError);
 }
 
+static void test_refresh_all_agent_status_no_leds_skips() {
+  reset_loop_fixture();
+  conf.ctm_configured = true;
+  conf.wifi_configured = true;
+  conf.account_id = 5;
+  setMockMillis(1234);
+  HTTPClient::setGlobal(200, "{\"users\":[]}");
+
+  refreshAllAgentStatus();
+
+  TEST_ASSERT_EQUAL_UINT(1234, lastStatusCheck);
+}
+
+static void test_refresh_all_agent_status_http_error() {
+  reset_loop_fixture();
+  conf.ctm_configured = true;
+  conf.wifi_configured = true;
+  conf.account_id = 5;
+  conf.leds[0] = 1;
+  setMockMillis(4321);
+  HTTPClient::setGlobal(-1, "{}");
+
+  refreshAllAgentStatus();
+
+  TEST_ASSERT_EQUAL_UINT(4321, lastStatusCheck);
+}
+
+static void test_refresh_all_agent_status_access_denied_sets_error() {
+  reset_loop_fixture();
+  conf.ctm_configured = true;
+  conf.wifi_configured = true;
+  conf.account_id = 5;
+  conf.leds[0] = 7;
+  HTTPClient::setGlobal(200, "{\"access\":\"denied\"}");
+
+  refreshAllAgentStatus();
+
+  TEST_ASSERT_EQUAL_UINT32(pixelStrip.Color(55, 200, 90), pixelStrip.getPixelColor(0));
+}
+
+static void test_refresh_all_agent_status_authentication_refreshes_token() {
+  reset_loop_fixture();
+  conf.ctm_configured = true;
+  conf.wifi_configured = true;
+  conf.account_id = 5;
+  conf.leds[0] = 11;
+  std::strcpy(conf.refresh_token, "rtok");
+  HTTPClient::setGlobal(200, "{\"authentication\":\"failed token expired\"}");
+
+  refreshAllAgentStatus();
+
+  TEST_ASSERT_TRUE(linkError);
+}
+
+static void test_refresh_all_agent_status_offline_fallback_when_missing_status() {
+  reset_loop_fixture();
+  conf.ctm_configured = true;
+  conf.wifi_configured = true;
+  conf.account_id = 5;
+  conf.leds[0] = 3;
+  HTTPClient::setGlobal(200, "{\"users\":[{\"uid\":3}]}");
+
+  refreshAllAgentStatus();
+
+  TEST_ASSERT_EQUAL_UINT32(0, pixelStrip.getPixelColor(0));
+}
+
+static void test_refresh_all_agent_status_bad_json_early_returns() {
+  reset_loop_fixture();
+  conf.ctm_configured = true;
+  conf.wifi_configured = true;
+  conf.account_id = 5;
+  conf.leds[0] = 8;
+  setMockMillis(9876);
+  HTTPClient::setGlobal(200, "not-json");
+
+  refreshAllAgentStatus();
+
+  TEST_ASSERT_EQUAL_UINT(9876, lastStatusCheck);
+  TEST_ASSERT_EQUAL_UINT32(0, pixelStrip.getPixelColor(0));
+}
+
 static void test_refresh_all_agent_status_videos_sets_inbound() {
   reset_loop_fixture();
   conf.ctm_configured = true;
@@ -382,6 +464,12 @@ void run_loop_state_tests() {
   RUN_TEST(test_refresh_cap_token_http_error);
   RUN_TEST(test_refresh_access_token_success);
   RUN_TEST(test_refresh_all_agent_status_updates_leds);
+  RUN_TEST(test_refresh_all_agent_status_no_leds_skips);
+  RUN_TEST(test_refresh_all_agent_status_http_error);
+  RUN_TEST(test_refresh_all_agent_status_access_denied_sets_error);
+  RUN_TEST(test_refresh_all_agent_status_authentication_refreshes_token);
+  RUN_TEST(test_refresh_all_agent_status_offline_fallback_when_missing_status);
+  RUN_TEST(test_refresh_all_agent_status_bad_json_early_returns);
   RUN_TEST(test_refresh_all_agent_status_videos_sets_inbound);
   RUN_TEST(test_fetch_custom_status_parses_statuses);
   RUN_TEST(test_dns_processed_when_ap_active);

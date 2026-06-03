@@ -31,12 +31,18 @@ public:
   void setCACert(const char*) {}
   void onEvent(WebsocketsEventCallback) {}
   void onMessage(WebsocketsMessageCallback) {}
-  bool connectSecure(const char*, int, const char*) { return true; }
+  bool connectSecure(const char*, int, const char*) { return connectResult; }
   void send(const String&) {}
   void ping() {}
   void pong() {}
   void poll() {}
+
+  // test helper
+  static void setNextConnectResult(bool ok) { connectResult = ok; }
+private:
+  static bool connectResult;
 };
 
-} // namespace websockets
+inline bool WebsocketsClient::connectResult = true;
 
+} // namespace websockets

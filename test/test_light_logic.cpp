@@ -14,14 +14,12 @@ extern Adafruit_NeoPixel *pixels;
 extern Ringer ringers[RINGERS + 1];
 extern int LocateLED;
 extern int locateCycles;
+extern bool refresh_called_flag;
 
 Adafruit_NeoPixel pixelStrip(LED_COUNT);
 
-static bool refresh_called = false;
-void refreshAllAgentStatus() { refresh_called = true; }
-
 void reset_light_logic_fixture() {
-  refresh_called = false;
+  refresh_called_flag = false;
   for (int i = 0; i < RINGERS + 1; ++i) {
     ringers[i] = {false, false, 0};
   }
@@ -219,7 +217,7 @@ static void test_locate_tick_resets_after_ten_cycles() {
 
   TEST_ASSERT_EQUAL(-1, LocateLED);
   TEST_ASSERT_EQUAL(0, locateCycles);
-  TEST_ASSERT_TRUE(refresh_called);
+  TEST_ASSERT_TRUE(refresh_called_flag);
   for (int i = 0; i < pixelStrip.numPixels(); ++i) {
     TEST_ASSERT_EQUAL_UINT32(0, pixelStrip.getPixelColor(i));
   }

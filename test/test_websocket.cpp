@@ -70,6 +70,22 @@ static void test_socket_event_ping_pong_and_unknown() {
   TEST_ASSERT_FALSE(socketClosed);
 }
 
+static void test_start_websocket_handles_connect_failure() {
+  reset_ws_fixture();
+  websockets::WebsocketsClient::setNextConnectResult(false);
+  startWebsocket();
+  TEST_ASSERT_FALSE(hasSocketConnected);
+  TEST_ASSERT_FALSE(socketClosed);
+}
+
+static void test_start_websocket_missing_token_marks_closed() {
+  reset_ws_fixture();
+  conf.account_id = 0; // force refreshCapToken to fail
+  startWebsocket();
+  TEST_ASSERT_FALSE(hasSocketConnected);
+  TEST_ASSERT_TRUE(socketClosed);
+}
+
 static void test_socket_message_handshake_updates_ping() {
   reset_ws_fixture();
   hasAuthGranted = false;
@@ -93,6 +109,8 @@ static void test_socket_message_status_updates_led_and_ringer() {
 
 void run_websocket_tests() {
   RUN_TEST(test_start_websocket_sets_connected_and_token);
+  RUN_TEST(test_start_websocket_handles_connect_failure);
+  RUN_TEST(test_start_websocket_missing_token_marks_closed);
   RUN_TEST(test_socket_event_open_close_flags);
   RUN_TEST(test_socket_event_ping_pong_and_unknown);
   RUN_TEST(test_socket_message_handshake_updates_ping);

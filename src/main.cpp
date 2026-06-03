@@ -179,6 +179,9 @@ RTC_DATA_ATTR uint32_t resetMagic;
 uint32_t lastLinkTimerCheck = 0;
 uint32_t lastPing = 0;
 uint32_t lastStatusCheck = 0;
+#ifdef CTM_UNIT_TEST
+bool refresh_called_flag = false;
+#endif
 int LocateLED = -1;
 int locateCycles = 0;
 String captoken;
@@ -1831,9 +1834,11 @@ void refreshAccessToken() {
     linkError = true;
   }
 }
-#ifndef CTM_UNIT_TEST
 void refreshAllAgentStatus() {
 	Serial.printf("refreshAllAgentStatus\n");
+#ifdef CTM_UNIT_TEST
+  refresh_called_flag = true;
+#endif
   lastStatusCheck = millis();
   String idList;
   for (int i = 0; i < LED_COUNT; ++i) {
@@ -1895,7 +1900,7 @@ void refreshAllAgentStatus() {
 					if (user.containsKey("status") && user["status"]) {
 						Serial.printf("got status: %s for led %d\n", (const char*)user["status"], ledIndex);
 						updateAgentStatusLed(ledIndex, user["status"]);
-					} else if (user.containsKey("videos") && user["videos"] > 0) {
+					} else if (user.containsKey("videos") && user["videos"].as<int>() > 0) {
 						updateAgentStatusLed(ledIndex, "inbound"); // active video treat like on a video 
 					} else {
 						Serial.printf("no status mark offline\n");
@@ -1913,7 +1918,6 @@ void refreshAllAgentStatus() {
   }
 
 }
-#endif
 
 void fetchCustomStatus() {
   Serial.printf("fetching available statues for account: %d", conf.account_id);
